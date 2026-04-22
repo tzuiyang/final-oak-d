@@ -15,9 +15,10 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator, List, Optional
+from typing import Iterator, List, Optional, Tuple
 
 import depthai as dai
+import numpy as np
 
 # COCO class IDs we act on. Everything else is discarded.
 TARGET_CLASSES = {
@@ -40,6 +41,7 @@ class Detection:
     """A single object detection with 3D position in camera frame.
 
     Camera frame convention (DepthAI): +x right, +y down, +z forward (meters).
+    Bounding-box fields are normalized to [0, 1] in the preview image frame.
     """
 
     class_id: int
@@ -48,6 +50,10 @@ class Detection:
     x: float  # meters, right of camera center
     y: float  # meters, below camera center
     z: float  # meters, in front of camera
+    bbox_xmin: float
+    bbox_ymin: float
+    bbox_xmax: float
+    bbox_ymax: float
 
     @property
     def distance(self) -> float:
@@ -77,6 +83,9 @@ class YoloSpatialDetector:
         self._device = dai.Device(pipeline)
         self._queue = self._device.getOutputQueue(
             name="detections", maxSize=4, blocking=False
+        )
+        self._rgb_queue = self._device.getOutputQueue(
+            name="rgb", maxSize=4, blocking=False
         )
         return self
 
@@ -127,20 +136,32 @@ class YoloSpatialDetector:
         cam.preview.link(yolo.input)
         stereo.depth.link(yolo.inputDepth)
 
-        # Output queue
+        # Output queues
         xout = pipeline.create(dai.node.XLinkOut)
         xout.setStreamName("detections")
         yolo.out.link(xout.input)
 
+        # Frame that was actually fed to YOLO — keeps bbox coords consistent.
+        xout_rgb = pipeline.create(dai.node.XLinkOut)
+        xout_rgb.setStreamName("rgb")
+        yolo.passthrough.link(xout_rgb.input)
+
         return pipeline
 
-    def detections(self) -> Iterator[List[Detection]]:
-        """Yield the list of (filtered) detections on every new camera frame."""
+    def detections(self) -> Iterator[Tuple[Optional[np.ndarray], List[Detection]]]:
+        """Yield (frame, detections) tuples synced per YOLO inference.
+
+        The frame is the BGR image that was fed into YOLO (so bbox coordinates
+        line up). It may be None on the very first iteration if the RGB queue
+        hasn't produced a packet yet.
+        """
         if self._queue is None:
             raise RuntimeError("Detector used outside of `with` block.")
         while True:
             packet = self._queue.get()  # blocks until a new detection frame arrives
-            yield self._filter(packet.detections)
+            rgb_packet = self._rgb_queue.tryGet()
+            frame = rgb_packet.getCvFrame() if rgb_packet is not None else None
+            yield frame, self._filter(packet.detections)
 
     @staticmethod
     def _filter(raw_detections) -> List[Detection]:
@@ -157,6 +178,10 @@ class YoloSpatialDetector:
                     x=d.spatialCoordinates.x / 1000.0,
                     y=d.spatialCoordinates.y / 1000.0,
                     z=d.spatialCoordinates.z / 1000.0,
+                    bbox_xmin=float(d.xmin),
+                    bbox_ymin=float(d.ymin),
+                    bbox_xmax=float(d.xmax),
+                    bbox_ymax=float(d.ymax),
                 )
             )
         return out

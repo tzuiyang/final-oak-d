@@ -33,7 +33,11 @@ follow-behavior layer on top of that stack.
 - `mission_controller_node.py` — state machine: prints visible objects,
   accepts user selection on `/oakd/select_target`, runs the path-clear
   check, then engages the follower or publishes on `/oakd/error`.
-- `oakd.launch.py` — launches the two nodes above.
+- `web_ui_node.py` — Flask server on port 8080. Shows the annotated
+  camera stream (MJPEG) and forwards click coordinates to
+  `/oakd/select_target`. Clicks on empty space disengage.
+- `templates/index.html` — the UI page served by `web_ui_node.py`.
+- `oakd.launch.py` — launches the three nodes above.
 - `deploy.py` — downloads the YOLO blob if missing, then runs
   `ros2 launch oakd.launch.py`. Assumes the upstream stack is already up.
 - `reference/pupperv3-monorepo/` — upstream Pupper v3 control code,
@@ -41,23 +45,32 @@ follow-behavior layer on top of that stack.
 
 ## Topic wiring
 
-    (OAK-D hardware)
-           │
-           ▼
-    object_follower_node ──/oakd/detections──▶ mission_controller_node
-           ▲                                         │
-           │◀──────────── /oakd/target ──────────────┘
-           │                                         ▲
-           │                                         │
-           │                                 /oakd/select_target
-           │                                 (published by user)
-           │
-           └──/person_following_cmd_vel──▶ cmd_vel_mux ──▶ neural_controller ──▶ legs
+                                 (OAK-D hardware)
+                                        │
+                                        ▼
+    ┌──────────────── object_follower_node ──────────────┐
+    │                                                    │
+    │  /oakd/detections (JSON)        /oakd/frame_jpeg   │
+    │  /person_following_cmd_vel      (CompressedImage)  │
+    │                                                    │
+    └────────────▲───────────────────────────────────────┘
+                 │                │            │
+          /oakd/target             │            │
+                 │                 ▼            ▼
+        mission_controller_node   web_ui_node (Flask :8080)
+                 ▲                  │
+                 │                  │
+       /oakd/select_target ◀────────┘  (from browser clicks)
 
-    Errors: mission_controller_node ──/oakd/error──▶ (operator log)
+    Errors: mission_controller_node ──/oakd/error──▶ web_ui (red pill) + log
+    Motion: object_follower  ──/person_following_cmd_vel──▶ upstream cmd_vel_mux
 
-User interaction from the command line:
+### User interaction
 
+Browser: open `http://<pi-ip>:8080/`, click an object (green box = engaged,
+amber = detected). Click empty space or the "stop" button to disengage.
+
+CLI (works alongside the UI):
 ```bash
 ros2 topic pub -1 /oakd/select_target std_msgs/String "{data: 'chair'}"
 ros2 topic pub -1 /oakd/select_target std_msgs/String "{data: ''}"   # disengage

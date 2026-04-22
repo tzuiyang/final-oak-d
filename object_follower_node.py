@@ -3,8 +3,9 @@
 ROS 2 node that owns the OAK-D pipeline.
 
 Publishes:
-  - /oakd/detections           std_msgs/String (JSON)   every frame
-  - /person_following_cmd_vel  geometry_msgs/Twist      only when engaged
+  - /oakd/detections           std_msgs/String (JSON)             every frame
+  - /oakd/frame_jpeg           sensor_msgs/CompressedImage (JPEG) ~15 Hz
+  - /person_following_cmd_vel  geometry_msgs/Twist                only when engaged
 
 Subscribes:
   - /oakd/target               std_msgs/String          class_name to follow, or
@@ -15,15 +16,24 @@ Feeds into the upstream cmd_vel_mux as the lowest-priority source
 """
 
 import json
+import math
+import time
 from pathlib import Path
 
+import cv2
+import numpy as np
 import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
+from sensor_msgs.msg import CompressedImage
 from std_msgs.msg import String
 
 from detector import YoloSpatialDetector
 from follower import FollowerConfig, ObjectFollower
+
+
+FRAME_PUBLISH_PERIOD_S = 1.0 / 15.0  # cap at 15 fps to keep WiFi / CPU happy
+JPEG_QUALITY = 75
 
 
 class ObjectFollowerNode(Node):
@@ -54,12 +64,14 @@ class ObjectFollowerNode(Node):
         if not blob_path.is_absolute():
             blob_path = Path(__file__).parent / blob_path
 
-        self._engaged_target = ""  # empty = stand still, don't publish cmd_vel
-        self._had_target_in_view = False  # tracks target-visible transitions
+        self._engaged_target = ""
+        self._had_target_in_view = False
+        self._last_frame_pub = 0.0
 
         cmd_topic = self.get_parameter("cmd_vel_topic").value
         self._cmd_pub = self.create_publisher(Twist, cmd_topic, 10)
         self._det_pub = self.create_publisher(String, "/oakd/detections", 10)
+        self._frame_pub = self.create_publisher(CompressedImage, "/oakd/frame_jpeg", 10)
         self._target_sub = self.create_subscription(
             String, "/oakd/target", self._on_target, 10
         )
@@ -85,11 +97,13 @@ class ObjectFollowerNode(Node):
         self._had_target_in_view = False
 
     def _tick(self):
-        detections = next(self._detection_stream, None)
-        if detections is None:
+        item = next(self._detection_stream, None)
+        if item is None:
             return
+        frame, detections = item
 
         self._publish_detections(detections)
+        self._maybe_publish_frame(frame, detections)
 
         if not self._engaged_target:
             return
@@ -130,6 +144,10 @@ class ObjectFollowerNode(Node):
                     "z": round(d.z, 3),
                     "distance": round(d.distance, 3),
                     "bearing": round(d.bearing, 3),
+                    "bbox_xmin": round(d.bbox_xmin, 4),
+                    "bbox_ymin": round(d.bbox_ymin, 4),
+                    "bbox_xmax": round(d.bbox_xmax, 4),
+                    "bbox_ymax": round(d.bbox_ymax, 4),
                 }
                 for d in detections
             ]
@@ -138,9 +156,62 @@ class ObjectFollowerNode(Node):
         msg.data = json.dumps(payload)
         self._det_pub.publish(msg)
 
+    def _maybe_publish_frame(self, frame, detections):
+        if frame is None:
+            return
+        now = time.monotonic()
+        if now - self._last_frame_pub < FRAME_PUBLISH_PERIOD_S:
+            return
+        self._last_frame_pub = now
+
+        annotated = _annotate(frame, detections, self._engaged_target)
+        ok, jpeg = cv2.imencode(
+            ".jpg", annotated, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY]
+        )
+        if not ok:
+            self.get_logger().warn("JPEG encode failed — dropping frame")
+            return
+
+        msg = CompressedImage()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.format = "jpeg"
+        msg.data = jpeg.tobytes()
+        self._frame_pub.publish(msg)
+
     def destroy_node(self):
         self._detector_ctx.__exit__(None, None, None)
         super().destroy_node()
+
+
+def _annotate(frame: np.ndarray, detections, engaged_target: str) -> np.ndarray:
+    out = frame.copy()
+    h, w = out.shape[:2]
+    for d in detections:
+        x1 = int(d.bbox_xmin * w)
+        y1 = int(d.bbox_ymin * h)
+        x2 = int(d.bbox_xmax * w)
+        y2 = int(d.bbox_ymax * h)
+        is_engaged = d.class_name == engaged_target
+        color = (0, 200, 0) if is_engaged else (0, 200, 255)
+        thickness = 3 if is_engaged else 2
+        cv2.rectangle(out, (x1, y1), (x2, y2), color, thickness)
+        label = (
+            f"{d.class_name} {d.distance:.2f}m "
+            f"{math.degrees(d.bearing):+.0f}deg"
+        )
+        _draw_label(out, label, (x1, y1), color)
+    return out
+
+
+def _draw_label(img: np.ndarray, text: str, anchor, color):
+    x, y = anchor
+    (tw, th), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+    y_top = max(0, y - th - baseline - 4)
+    cv2.rectangle(img, (x, y_top), (x + tw + 6, y_top + th + baseline + 4), color, -1)
+    cv2.putText(
+        img, text, (x + 3, y_top + th + 2),
+        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA,
+    )
 
 
 def main():

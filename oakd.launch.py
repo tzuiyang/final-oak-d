@@ -1,7 +1,8 @@
 """
-Launches our two OAK-D nodes:
-  - object_follower_node.py   (OAK-D + YOLO + cmd_vel publisher)
+Launches the three OAK-D-side nodes:
+  - object_follower_node.py    (OAK-D + YOLO + cmd_vel + frame publisher)
   - mission_controller_node.py (state machine + path-clear check)
+  - web_ui_node.py             (Flask server for click-to-select)
 
 The upstream Pupper v3 neural_controller stack must already be running
 (`ros2 launch neural_controller launch.py` from the monorepo). Our nodes
@@ -18,25 +19,24 @@ SCRIPT_DIR = Path(__file__).parent
 CONFIG_PATH = SCRIPT_DIR / "config.yaml"
 
 
+def _node(script: str) -> ExecuteProcess:
+    return ExecuteProcess(
+        cmd=[
+            sys.executable,
+            str(SCRIPT_DIR / script),
+            "--ros-args",
+            "--params-file",
+            str(CONFIG_PATH),
+        ],
+        output="screen",
+    )
+
+
 def generate_launch_description():
-    follower = ExecuteProcess(
-        cmd=[
-            sys.executable,
-            str(SCRIPT_DIR / "object_follower_node.py"),
-            "--ros-args",
-            "--params-file",
-            str(CONFIG_PATH),
-        ],
-        output="screen",
+    return LaunchDescription(
+        [
+            _node("object_follower_node.py"),
+            _node("mission_controller_node.py"),
+            _node("web_ui_node.py"),
+        ]
     )
-    mission = ExecuteProcess(
-        cmd=[
-            sys.executable,
-            str(SCRIPT_DIR / "mission_controller_node.py"),
-            "--ros-args",
-            "--params-file",
-            str(CONFIG_PATH),
-        ],
-        output="screen",
-    )
-    return LaunchDescription([follower, mission])

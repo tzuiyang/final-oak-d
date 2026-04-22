@@ -34,3 +34,10 @@ mission_controller:
 
     # How often the path-clear check is re-evaluated.
     evaluate_period_s: 0.2
+
+web_ui:
+  ros__parameters:
+    # Flask bind address. "0.0.0.0" exposes on all interfaces; use the Pi's
+    # LAN IP from a laptop browser. Use "127.0.0.1" to restrict to the Pi.
+    host: "0.0.0.0"
+    port: 8080

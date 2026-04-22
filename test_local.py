@@ -25,7 +25,7 @@ def main() -> int:
         print("Camera running. Ctrl-C to quit.")
         print(f"{'class':>12}  {'conf':>5}  {'x':>6}  {'y':>6}  {'z':>6}  "
               f"{'dist':>5}  {'bearing':>7}  |  x_vel   y_vel   ang_vel")
-        for detections in detector.detections():
+        for _frame, detections in detector.detections():
             cmd = follower.step(detections)
             if detections:
                 d = min(detections, key=lambda x: x.distance)
