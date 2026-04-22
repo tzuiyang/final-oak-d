@@ -10,7 +10,7 @@ object_follower:
     k_forward: 0.8
     k_yaw: 1.2
 
-    # Output clamps (keep well below the Lab 5 training ranges so the policy stays stable)
+    # Output clamps (keep modest so the default walking policy stays stable)
     max_forward_vel: 0.5
     max_yaw_vel: 1.5
 

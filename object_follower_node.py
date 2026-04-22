@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 ROS 2 node that runs the OAK-D + YOLO + follower pipeline on the Pupper and
-publishes velocity commands on the same topic the Lab 5 gamepad currently uses.
+publishes velocity commands on /cmd_vel — the same topic the gamepad uses.
 
 Topic published:  /cmd_vel   (geometry_msgs/Twist)
 Rate:             ~15 Hz (bounded by YOLO inference on OAK-D)

@@ -5,7 +5,7 @@ This is a deliberately simple reactive P-controller. It does not plan a path,
 build a map, or avoid obstacles — it just turns toward the closest target and
 walks forward until close enough to stop.
 
-Matches the Lab 5 neural_controller interface: three scalar velocities.
+Matches the Pupper walking-controller interface: three scalar velocities.
     x_vel   forward   m/s   (Pupper body frame; positive = forward)
     y_vel   lateral   m/s   (positive = left; we leave this at 0)
     ang_vel yaw       rad/s (positive = turn left)
@@ -36,7 +36,7 @@ class FollowerConfig:
     target_distance: float = 0.4     # meters; stop when object is within this distance
     timeout_frames: int = 10         # stop if no detection for this many frames in a row
 
-    # Velocity gains (tuned conservatively for Lab 5's trained policy)
+    # Velocity gains (tuned conservatively so the default walking policy stays stable)
     k_forward: float = 0.8           # m/s per meter of distance error
     k_yaw: float = 1.2               # rad/s per radian of bearing error
 

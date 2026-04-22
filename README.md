@@ -1,8 +1,12 @@
 # final_oak_d — Autonomous Object-Following for Pupper
 
-Detect chairs and balls with an OAK-D Lite camera, then drive the Pupper's Lab 5 RL walking policy toward them using published velocity commands. Reuses the trained neural controller unchanged — this module only adds perception and a high-level planner.
+An **independent ROS 2 node** that detects chairs and balls with an OAK-D Lite camera and publishes velocity commands on `/cmd_vel`. The Pupper's **default walking controller** (the pretrained policy that ships with the robot and is activated by the "X" button on the gamepad) subscribes to `/cmd_vel` and turns those commands into leg motions — so the only thing this package has to do is publish `Twist` messages.
+
+This package is self-contained. It does not modify, extend, or depend on any other code on the robot.
 
 ## Architecture
+
+This package owns everything above `/cmd_vel`. Everything below it is the robot's pre-installed walking stack, which we do not touch.
 
 ```
 OAK-D Lite (USB)
@@ -17,13 +21,16 @@ follower.py  (ObjectFollower class)
     |
     | Twist(linear.x, linear.y, angular.z)
     v
-/cmd_vel  (ROS 2 topic)
+object_follower_node.py  (ROS 2 node)
     |
+    | publishes to
     v
-Lab 5 neural_controller  (unchanged)
-    |
+/cmd_vel  (geometry_msgs/Twist)
+    :
+    : (consumed by the Pupper's default walking controller,
+    :  which is already running on the robot)
     v
-Pupper joints
+Pupper legs
 ```
 
 ## Files
@@ -84,14 +91,16 @@ If `ang_vel` has the wrong sign (the robot would turn *away* from the object), f
 
 ### On the Pupper
 
-After `test_local.py` looks correct, copy the folder to the robot (e.g. via `scp`), start the Lab 5 neural controller in one terminal, then in a second terminal:
+After `test_local.py` looks correct, copy the folder to the robot (e.g. via `scp`):
 
 ```bash
 cd final_oak_d
 python3 deploy.py
 ```
 
-The robot walks toward whatever chair or ball the camera sees, stopping when within `target_distance` (default 0.4 m).
+This runs `object_follower_node.py` and starts publishing Twist messages on `/cmd_vel`. The Pupper's default walking controller — the pretrained policy that's already running on the robot — subscribes to `/cmd_vel` and drives the legs accordingly, so the robot will walk toward whatever chair or ball the camera sees. No configuration change on the robot is required; we're just publishing on a topic the default stack already listens to.
+
+The robot stops when the target is within `target_distance` (default 0.4 m) or when the target is not detected for `timeout_frames` consecutive frames.
 
 ## Coordinate Frames
 

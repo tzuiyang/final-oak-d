@@ -2,9 +2,10 @@
 """
 Deployment entry point on the Pupper.
 
-Assumes the Lab 5 neural_controller is already running (launched via
-`python3 deploy.py` from the Lab5 folder) and consuming /cmd_vel. This script
-only starts the object-follower side of the pipeline.
+Starts the object-follower node, which publishes Twist messages on /cmd_vel.
+The Pupper's default walking controller (the pretrained policy that ships
+with the Pupper) is expected to already be running on the robot, and will
+consume those Twist messages automatically.
 
 If the YOLO blob hasn't been downloaded yet, it downloads it first.
 """
