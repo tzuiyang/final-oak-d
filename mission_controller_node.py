@@ -5,16 +5,18 @@ Mission state machine for the OAK-D follow demo.
 Flow:
   1. Pupper stands still. This node subscribes to /oakd/detections and
      periodically prints the visible objects so the operator can choose one.
-  2. Operator selects a class by publishing on /oakd/select_target, e.g.:
-         ros2 topic pub -1 /oakd/select_target std_msgs/String "{data: 'chair'}"
-     Publishing an empty string disengages and returns to "stand still".
-  3. Before engaging, this node checks whether the forward corridor toward
-     the target has any other detection closer than the target itself.
-     Limitation: only YOLO-visible obstacles are considered — there is no
-     full depth map check. Walls and floor edges would not be detected.
-  4. If clear → publish target on /oakd/target (picked up by the follower,
-     which starts driving). If blocked → log and publish on /oakd/error,
-     follower stays disengaged.
+  2. Operator selects a class by publishing on /oakd/select_target (or via
+     the web UI, which publishes the same topic). Empty string disengages.
+  3. While a target is requested, this node checks whether the forward
+     corridor is clear of other YOLO-visible detections closer than the
+     target. Limitation: walls, floor edges, and non-COCO objects are
+     invisible to this check.
+  4. A request is considered failed only after it has missed several
+     consecutive evaluations (`miss_threshold`). Single-frame YOLO
+     dropouts are ignored — the follower's own timeout handles those.
+     Once a failure is declared, the follower is disengaged and an error
+     is published on /oakd/error, but the request stays set so the node
+     re-engages automatically if the target reappears.
 """
 
 import json
@@ -32,10 +34,16 @@ class MissionControllerNode(Node):
         self.declare_parameter("obstacle_clearance_m", 0.2)
         self.declare_parameter("print_period_s", 2.0)
         self.declare_parameter("evaluate_period_s", 0.2)
+        # How many consecutive evaluations without the target before we
+        # surface an error and disengage. At the default 0.2 s eval period,
+        # 8 misses ≈ 1.6 s of confirmed absence.
+        self.declare_parameter("miss_threshold", 8)
 
-        self._latest_detections: list[dict] = []
+        self._latest_detections: list = []
         self._requested_target = ""
         self._engaged_target = ""
+        self._miss_count = 0
+        self._last_error = ""
 
         self.create_subscription(String, "/oakd/detections", self._on_detections, 10)
         self.create_subscription(String, "/oakd/select_target", self._on_select, 10)
@@ -62,12 +70,18 @@ class MissionControllerNode(Node):
 
     def _on_select(self, msg: String):
         new = (msg.data or "").strip()
+        if new == self._requested_target:
+            return
         self._requested_target = new
+        self._miss_count = 0
         if new:
             self.get_logger().info(f"User selected: {new}")
+            # Clear any stale error from a previous selection.
+            self._publish_error("")
         else:
             self.get_logger().info("User disengaged")
             self._publish_target("")
+            self._publish_error("")
 
     def _print_standing_menu(self):
         if self._requested_target or self._engaged_target:
@@ -88,17 +102,23 @@ class MissionControllerNode(Node):
         target_class = self._requested_target
         snapshot = list(self._latest_detections)
         matching = [d for d in snapshot if d["class_name"] == target_class]
+        threshold = int(self.get_parameter("miss_threshold").value)
 
         if not matching:
-            self._raise_error(f"No {target_class} visible")
-            self._requested_target = ""
+            self._miss_count += 1
+            if self._miss_count == threshold:
+                # First time we cross the threshold — disengage and warn.
+                self._publish_error(f"No {target_class} visible")
+                self._publish_target("")
+            # Keep the request; we'll re-engage if it reappears.
             return
 
+        # Target is visible this tick.
+        self._miss_count = 0
         target = min(matching, key=lambda d: d["distance"])
 
         corridor = self.get_parameter("corridor_half_width_rad").value
         clearance = self.get_parameter("obstacle_clearance_m").value
-
         blockers = [
             d
             for d in snapshot
@@ -109,28 +129,35 @@ class MissionControllerNode(Node):
 
         if blockers:
             names = ", ".join(sorted({b["class_name"] for b in blockers}))
-            self._raise_error(f"Path to {target_class} blocked by: {names}")
+            self._publish_error(f"Path to {target_class} blocked by: {names}")
+            self._publish_target("")
             return
 
+        # All clear — engage.
         if self._engaged_target != target_class:
             self.get_logger().info(
                 f"Path clear. Engaging follower toward {target_class}."
             )
         self._publish_target(target_class)
+        self._publish_error("")  # clear any stale error now that we're engaged
 
     def _publish_target(self, class_name: str):
+        if class_name == self._engaged_target:
+            return
         self._engaged_target = class_name
         msg = String()
         msg.data = class_name
         self._target_pub.publish(msg)
 
-    def _raise_error(self, text: str):
-        self.get_logger().warn(text)
+    def _publish_error(self, text: str):
+        if text == self._last_error:
+            return
+        self._last_error = text
+        if text:
+            self.get_logger().warn(text)
         msg = String()
         msg.data = text
         self._error_pub.publish(msg)
-        if self._engaged_target:
-            self._publish_target("")
 
 
 def main():
