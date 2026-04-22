@@ -59,6 +59,10 @@ class ObjectFollowerNode(Node):
         self._detector_ctx = YoloSpatialDetector(blob_path)
         self._detector = self._detector_ctx.__enter__()
         self.get_logger().info(f"OAK-D pipeline started with model {blob_path}")
+        self.get_logger().info("Waiting for chair or sports-ball detections...")
+
+        # Log state — print target-lost only on transition, not every frame.
+        self._had_target = False
 
         # Drive the loop off a timer so ROS shutdown is clean.
         self._timer = self.create_timer(0.01, self._tick)
@@ -71,6 +75,21 @@ class ObjectFollowerNode(Node):
             return
 
         cmd = self._follower.step(detections)
+
+        if detections:
+            # The follower picks closest-or-preferred internally; we just log
+            # the closest for visibility (matches default follower behavior).
+            best = min(detections, key=lambda d: d.distance)
+            self.get_logger().info(
+                f"TARGET {best.class_name:12s}  conf={best.confidence:.2f}  "
+                f"xyz=({best.x:+.2f},{best.y:+.2f},{best.z:+.2f})m  "
+                f"dist={best.distance:.2f}m  bearing={best.bearing:+.3f}rad  "
+                f"->  x_vel={cmd.x_vel:+.2f}  ang_vel={cmd.ang_vel:+.2f}"
+            )
+            self._had_target = True
+        elif self._had_target:
+            self.get_logger().info("target lost — publishing zero Twist")
+            self._had_target = False
 
         msg = Twist()
         msg.linear.x = cmd.x_vel
