@@ -31,7 +31,7 @@ class ObjectFollowerNode(Node):
     def __init__(self):
         super().__init__("object_follower")
 
-        self.declare_parameter("model_blob_path", "models/yolov6n_coco_640x352.blob")
+        self.declare_parameter("model_blob_path", "models/yolov8n_coco_640x352.blob")
         self.declare_parameter("target_distance", 0.4)
         self.declare_parameter("k_forward", 0.8)
         self.declare_parameter("k_yaw", 1.2)
