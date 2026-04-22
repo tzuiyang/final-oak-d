@@ -14,8 +14,23 @@ object_follower:
     max_forward_vel: 0.5
     max_yaw_vel: 1.5
 
-    # "chair", "sports ball", or "" to go for the nearest target regardless of class
-    preferred_class: ""
-
     # Stop if we lose the target for this many consecutive frames
     timeout_frames: 10
+
+    # cmd_vel_mux expects one of: /teleop_cmd_vel, /llm_cmd_vel, /person_following_cmd_vel
+    # Using the lowest-priority input so teleop can always preempt for safety.
+    cmd_vel_topic: "/person_following_cmd_vel"
+
+mission_controller:
+  ros__parameters:
+    # Angular half-width (radians) of the "path corridor" checked for obstacles.
+    corridor_half_width_rad: 0.25
+
+    # How much closer than the target an object must be (meters) to count as blocking.
+    obstacle_clearance_m: 0.2
+
+    # How often the "standing still — visible: ..." menu is logged.
+    print_period_s: 2.0
+
+    # How often the path-clear check is re-evaluated.
+    evaluate_period_s: 0.2
