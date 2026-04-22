@@ -38,8 +38,12 @@ follow-behavior layer on top of that stack.
   `/oakd/select_target`. Clicks on empty space disengage.
 - `templates/index.html` — the UI page served by `web_ui_node.py`.
 - `oakd.launch.py` — launches the three nodes above.
-- `deploy.py` — downloads the YOLO blob if missing, then runs
-  `ros2 launch oakd.launch.py`. Assumes the upstream stack is already up.
+- `deploy.py` — one-command launcher. Sources the shared pupper
+  workspace at `/home/pi/pupperv3-monorepo/ros2_ws` (overridable via
+  `PUPPER_WS`), starts upstream `neural_controller launch.py` in the
+  background, waits for it to settle, then starts `oakd.launch.py` in
+  the foreground. Cleans up upstream on Ctrl+C. Flags: `--ours` (skip
+  upstream if it's already running), `--upstream` (skip our stack).
 - `reference/pupperv3-monorepo/` — upstream Pupper v3 control code,
   cloned shallow and gitignored.
 
