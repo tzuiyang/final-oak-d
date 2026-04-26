@@ -38,9 +38,12 @@ follow-behavior layer on top of that stack.
   `/oakd/select_target`. Clicks on empty space disengage.
 - `templates/index.html` — the UI page served by `web_ui_node.py`.
 - `oakd.launch.py` — launches the three nodes above.
+- `pupper_minimal.launch.py` — launches only the upstream Pupper control
+  pieces needed by this demo, without the stock Pi camera / Hailo /
+  person follower that would conflict with our `/person_following_cmd_vel`.
 - `deploy.py` — one-command launcher. Sources the shared pupper
-  workspace at `/home/pi/pupperv3-monorepo/ros2_ws` (overridable via
-  `PUPPER_WS`), starts upstream `neural_controller launch.py` in the
+  workspace from `reference/pupperv3-monorepo/ros2_ws` when present
+  (overridable via `PUPPER_WS`), starts `pupper_minimal.launch.py` in the
   background, waits for it to settle, then starts `oakd.launch.py` in
   the foreground. Cleans up upstream on Ctrl+C. Flags: `--ours` (skip
   upstream if it's already running), `--upstream` (skip our stack).
@@ -55,7 +58,7 @@ follow-behavior layer on top of that stack.
     ┌──────────────── object_follower_node ──────────────┐
     │                                                    │
     │  /oakd/detections (JSON)        /oakd/frame_jpeg   │
-    │  /person_following_cmd_vel      (CompressedImage)  │
+    │  /person_following_cmd_vel      (Twist / JPEG out) │
     │                                                    │
     └────────────▲───────────────────────────────────────┘
                  │                │            │
@@ -99,8 +102,8 @@ ROS distro: **Jazzy**. Build with `ros2_ws/build.sh` inside the monorepo.
 
 ### Upstream nodes we MUST launch (from `reference/pupperv3-monorepo/`)
 
-Source: `ros2_ws/src/neural_controller/launch/launch.py`. These are the
-strict minimum needed to make the legs respond to `/cmd_vel`:
+Implemented by `pupper_minimal.launch.py`. These are the strict minimum
+needed to make the legs respond to `/cmd_vel`:
 
 1. `robot_state_publisher` — publishes the URDF as `robot_description`.
 2. `controller_manager/ros2_control_node` — the hardware interface.
@@ -136,22 +139,19 @@ strict minimum needed to make the legs respond to `/cmd_vel`:
 
 ### Our nodes (this repo)
 
-- **[object_follower_node.py](object_follower_node.py)** *(exists — needs refactor)*
-  Currently owns both detection and velocity command in one loop and
-  publishes continuously to `/cmd_vel`. For the demo we need to:
-  - Remap its output to `/person_following_cmd_vel` (go through the mux).
-  - Gate publishing behind an "engaged" flag so it can stand still.
-  - Accept a selected target (class + rough position).
-- **mission_controller_node.py** *(new — needs to be written)*
+- **[object_follower_node.py](object_follower_node.py)**
+  Owns both detection and velocity command in one loop. It publishes
+  detections every frame, publishes annotated JPEG frames for the UI, and
+  only publishes `/person_following_cmd_vel` while a target is engaged.
+  On target change or disengage it immediately publishes a zero Twist.
+- **mission_controller_node.py**
   The demo's state machine:
   1. Subscribe to detections, publish the current list (topic or service).
   2. Accept user selection (CLI / ROS service / topic).
-  3. Run the path-clear check on OAK-D depth in front of the robot.
+  3. Run the YOLO-visible path-clear check in front of the robot.
   4. Either engage the follower with the target, or publish an error.
-- Optional: split detection out of `object_follower_node.py` into a
-  separate `object_detector_node.py` that publishes a `Detections` topic
-  the mission controller and follower both consume. Cleaner, but not
-  required if we just add control hooks to the existing node.
+- `web_ui_node.py` serves the browser UI and forwards clicks to the mission
+  controller.
 
 ### Gotchas from the upstream code
 

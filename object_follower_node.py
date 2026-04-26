@@ -29,7 +29,7 @@ from sensor_msgs.msg import CompressedImage
 from std_msgs.msg import String
 
 from detector import YoloSpatialDetector
-from follower import FollowerConfig, ObjectFollower
+from follower import FollowerConfig, ObjectFollower, VelocityCommand
 
 
 FRAME_PUBLISH_PERIOD_S = 1.0 / 15.0  # cap at 15 fps to keep WiFi / CPU happy
@@ -93,6 +93,7 @@ class ObjectFollowerNode(Node):
             self.get_logger().info(f"Engaging follower on target: {new}")
         else:
             self.get_logger().info("Disengaged — standing still")
+        self._publish_velocity(VelocityCommand.zero())
         self._engaged_target = new
         self._had_target_in_view = False
 
@@ -126,11 +127,7 @@ class ObjectFollowerNode(Node):
             )
             self._had_target_in_view = False
 
-        twist = Twist()
-        twist.linear.x = cmd.x_vel
-        twist.linear.y = cmd.y_vel
-        twist.angular.z = cmd.ang_vel
-        self._cmd_pub.publish(twist)
+        self._publish_velocity(cmd)
 
     def _publish_detections(self, detections):
         payload = {
@@ -177,6 +174,13 @@ class ObjectFollowerNode(Node):
         msg.format = "jpeg"
         msg.data = jpeg.tobytes()
         self._frame_pub.publish(msg)
+
+    def _publish_velocity(self, cmd: VelocityCommand):
+        twist = Twist()
+        twist.linear.x = cmd.x_vel
+        twist.linear.y = cmd.y_vel
+        twist.angular.z = cmd.ang_vel
+        self._cmd_pub.publish(twist)
 
     def destroy_node(self):
         self._detector_ctx.__exit__(None, None, None)
