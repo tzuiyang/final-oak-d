@@ -21,6 +21,15 @@ object_follower:
     # Using the lowest-priority input so teleop can always preempt for safety.
     cmd_vel_topic: "/person_following_cmd_vel"
 
+    # Depth ROI used for generic obstacle checks. Coordinates are normalized
+    # image ratios; the ROI is a forward corridor in the aligned depth frame.
+    depth_corridor_width_ratio: 0.35
+    depth_corridor_ymin: 0.35
+    depth_corridor_ymax: 0.80
+    min_valid_depth_m: 0.15
+    max_valid_depth_m: 5.0
+    depth_block_percentile: 10.0
+
 mission_controller:
   ros__parameters:
     # Angular half-width (radians) of the "path corridor" checked for obstacles.
@@ -34,6 +43,9 @@ mission_controller:
 
     # How often the path-clear check is re-evaluated.
     evaluate_period_s: 0.2
+
+    # Fail closed if the depth corridor status is unavailable or invalid.
+    require_depth_path_check: true
 
 web_ui:
   ros__parameters:

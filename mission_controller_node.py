@@ -8,9 +8,8 @@ Flow:
   2. Operator selects a class by publishing on /oakd/select_target (or via
      the web UI, which publishes the same topic). Empty string disengages.
   3. While a target is requested, this node checks whether the forward
-     corridor is clear of other YOLO-visible detections closer than the
-     target. Limitation: walls, floor edges, and non-COCO objects are
-     invisible to this check.
+     corridor is clear of depth obstacles and other YOLO-visible detections
+     closer than the target.
   4. A request is considered failed only after it has missed several
      consecutive evaluations (`miss_threshold`). Single-frame YOLO
      dropouts are ignored — the follower's own timeout handles those.
@@ -34,18 +33,21 @@ class MissionControllerNode(Node):
         self.declare_parameter("obstacle_clearance_m", 0.2)
         self.declare_parameter("print_period_s", 2.0)
         self.declare_parameter("evaluate_period_s", 0.2)
+        self.declare_parameter("require_depth_path_check", True)
         # How many consecutive evaluations without the target before we
         # surface an error and disengage. At the default 0.2 s eval period,
         # 8 misses ≈ 1.6 s of confirmed absence.
         self.declare_parameter("miss_threshold", 8)
 
         self._latest_detections: list = []
+        self._latest_path_status: dict | None = None
         self._requested_target = ""
         self._engaged_target = ""
         self._miss_count = 0
         self._last_error = ""
 
         self.create_subscription(String, "/oakd/detections", self._on_detections, 10)
+        self.create_subscription(String, "/oakd/path_clear", self._on_path_status, 10)
         self.create_subscription(String, "/oakd/select_target", self._on_select, 10)
 
         self._target_pub = self.create_publisher(String, "/oakd/target", 10)
@@ -67,6 +69,9 @@ class MissionControllerNode(Node):
     def _on_detections(self, msg: String):
         payload = json.loads(msg.data)
         self._latest_detections = payload.get("detections", [])
+
+    def _on_path_status(self, msg: String):
+        self._latest_path_status = json.loads(msg.data)
 
     def _on_select(self, msg: String):
         new = (msg.data or "").strip()
@@ -119,6 +124,13 @@ class MissionControllerNode(Node):
 
         corridor = self.get_parameter("corridor_half_width_rad").value
         clearance = self.get_parameter("obstacle_clearance_m").value
+
+        depth_error = self._depth_path_error(target, clearance)
+        if depth_error is not None:
+            self._publish_error(depth_error)
+            self._publish_target("")
+            return
+
         blockers = [
             d
             for d in snapshot
@@ -140,6 +152,30 @@ class MissionControllerNode(Node):
             )
         self._publish_target(target_class)
         self._publish_error("")  # clear any stale error now that we're engaged
+
+    def _depth_path_error(self, target: dict, clearance: float):
+        status = self._latest_path_status
+        require_depth = bool(self.get_parameter("require_depth_path_check").value)
+        if not status:
+            if require_depth:
+                return "Depth path check unavailable"
+            return None
+
+        if not status.get("valid", False):
+            if require_depth:
+                reason = status.get("reason", "invalid depth path check")
+                return f"Depth path check unavailable: {reason}"
+            return None
+
+        nearest = status.get("nearest_obstacle_m")
+        if nearest is None:
+            return None
+
+        target_z = float(target.get("z", target.get("distance", 0.0)))
+        nearest = float(nearest)
+        if nearest < target_z - clearance:
+            return f"Path to {target['class_name']} blocked by depth obstacle at {nearest:.2f}m"
+        return None
 
     def _publish_target(self, class_name: str):
         if class_name == self._engaged_target:

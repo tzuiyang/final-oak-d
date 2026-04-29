@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Fetch a YOLOv6n COCO model compiled for the OAK-D Lite's Myriad X VPU.
+Fetch a YOLOv8n COCO model compiled for the OAK-D Lite's Myriad X VPU.
 
 YOLO models are pretrained on all 80 COCO classes — we cannot download just
 "chair" and "sports ball." We download the full model and filter detections

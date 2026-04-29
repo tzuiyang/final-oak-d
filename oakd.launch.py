@@ -1,12 +1,15 @@
 """
 Launches the three OAK-D-side nodes:
-  - object_follower_node.py    (OAK-D + YOLO + cmd_vel + frame publisher)
+  - object_follower_node.py    (OAK-D + YOLO + depth ROI + cmd_vel + frames)
   - mission_controller_node.py (state machine + path-clear check)
   - web_ui_node.py             (Flask server for click-to-select)
 
-The upstream Pupper v3 neural_controller stack must already be running
-(`ros2 launch neural_controller launch.py` from the monorepo). Our nodes
-only publish /person_following_cmd_vel — they do not drive the legs.
+The upstream Pupper v3 control stack must already be running. Prefer launching
+through `deploy.py`, which starts `pupper_minimal.launch.py` first; if launching
+manually, run `pupper_minimal.launch.py` instead of the stock upstream
+`neural_controller/launch.py` so the upstream person follower does not also
+publish to /person_following_cmd_vel. Our nodes only publish
+/person_following_cmd_vel — they do not drive the legs directly.
 """
 
 import sys

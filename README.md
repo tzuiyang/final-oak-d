@@ -7,7 +7,8 @@ The demo flow is:
 
 1. Pupper stands still while the OAK-D runs YOLO spatial detection.
 2. The operator selects a visible object from the web UI or `/oakd/select_target`.
-3. `mission_controller_node.py` checks whether the YOLO-visible path is clear.
+3. `mission_controller_node.py` checks whether the OAK-D depth corridor is
+   clear, with the old YOLO-visible blocker check kept as a secondary guard.
 4. If clear, `object_follower_node.py` publishes commands to
    `/person_following_cmd_vel`, which the upstream Pupper `cmd_vel_mux` forwards
    to `/cmd_vel`.
@@ -24,7 +25,7 @@ Teleop remains higher priority than our follower in the mux:
 | `detector.py` | DepthAI OAK-D YOLO spatial detection pipeline |
 | `follower.py` | Converts a selected detection into Pupper velocity commands |
 | `object_follower_node.py` | Owns OAK-D, publishes detections/frame JPEGs, and publishes follower commands only while engaged |
-| `mission_controller_node.py` | Target-selection state machine and path-clear check |
+| `mission_controller_node.py` | Target-selection state machine and depth-corridor path-clear check |
 | `web_ui_node.py` | Flask UI on port 8080 for camera stream, click-to-select, and errors |
 | `templates/index.html` | Web UI page |
 | `oakd.launch.py` | Launches this repo's three ROS nodes |
@@ -90,6 +91,7 @@ Expected follower signs:
 
 ## Current Limitation
 
-The path-clear check only sees YOLO detections in the OAK-D output. Walls,
-floor edges, and non-target non-COCO obstacles are not blocked unless a future
-full-depth ROI check is added.
+The path-clear check is a simple central ROI sampled from the OAK-D depth map.
+It can catch non-COCO obstacles in front of the robot, but it does not build a
+map, plan around objects, or reason about hazards outside the configured
+corridor.

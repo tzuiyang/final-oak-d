@@ -4,6 +4,7 @@ ROS 2 node that owns the OAK-D pipeline.
 
 Publishes:
   - /oakd/detections           std_msgs/String (JSON)             every frame
+  - /oakd/path_clear           std_msgs/String (JSON)             every frame
   - /oakd/frame_jpeg           sensor_msgs/CompressedImage (JPEG) ~15 Hz
   - /person_following_cmd_vel  geometry_msgs/Twist                only when engaged
 
@@ -48,6 +49,12 @@ class ObjectFollowerNode(Node):
         self.declare_parameter("max_yaw_vel", 1.5)
         self.declare_parameter("timeout_frames", 10)
         self.declare_parameter("cmd_vel_topic", "/person_following_cmd_vel")
+        self.declare_parameter("depth_corridor_width_ratio", 0.35)
+        self.declare_parameter("depth_corridor_ymin", 0.35)
+        self.declare_parameter("depth_corridor_ymax", 0.80)
+        self.declare_parameter("min_valid_depth_m", 0.15)
+        self.declare_parameter("max_valid_depth_m", 5.0)
+        self.declare_parameter("depth_block_percentile", 10.0)
 
         cfg = FollowerConfig(
             target_distance=self.get_parameter("target_distance").value,
@@ -71,6 +78,7 @@ class ObjectFollowerNode(Node):
         cmd_topic = self.get_parameter("cmd_vel_topic").value
         self._cmd_pub = self.create_publisher(Twist, cmd_topic, 10)
         self._det_pub = self.create_publisher(String, "/oakd/detections", 10)
+        self._path_pub = self.create_publisher(String, "/oakd/path_clear", 10)
         self._frame_pub = self.create_publisher(CompressedImage, "/oakd/frame_jpeg", 10)
         self._target_sub = self.create_subscription(
             String, "/oakd/target", self._on_target, 10
@@ -101,10 +109,12 @@ class ObjectFollowerNode(Node):
         item = next(self._detection_stream, None)
         if item is None:
             return
-        frame, detections = item
+        frame, depth_frame, detections = item
 
         self._publish_detections(detections)
-        self._maybe_publish_frame(frame, detections)
+        path_status = self._compute_path_status(depth_frame)
+        self._publish_path_status(path_status)
+        self._maybe_publish_frame(frame, detections, path_status)
 
         if not self._engaged_target:
             return
@@ -153,7 +163,67 @@ class ObjectFollowerNode(Node):
         msg.data = json.dumps(payload)
         self._det_pub.publish(msg)
 
-    def _maybe_publish_frame(self, frame, detections):
+    def _compute_path_status(self, depth_frame):
+        width_ratio = _clamp_float(
+            self.get_parameter("depth_corridor_width_ratio").value, 0.05, 1.0
+        )
+        y_min_ratio = _clamp_float(self.get_parameter("depth_corridor_ymin").value, 0.0, 1.0)
+        y_max_ratio = _clamp_float(self.get_parameter("depth_corridor_ymax").value, 0.0, 1.0)
+        if y_max_ratio <= y_min_ratio:
+            y_min_ratio, y_max_ratio = 0.35, 0.80
+
+        status = {
+            "valid": False,
+            "nearest_obstacle_m": None,
+            "min_depth_m": None,
+            "sample_count": 0,
+            "roi": {
+                "xmin": round((1.0 - width_ratio) / 2.0, 4),
+                "xmax": round((1.0 + width_ratio) / 2.0, 4),
+                "ymin": round(y_min_ratio, 4),
+                "ymax": round(y_max_ratio, 4),
+            },
+            "depth_block_percentile": float(
+                self.get_parameter("depth_block_percentile").value
+            ),
+        }
+        if depth_frame is None:
+            status["reason"] = "no depth frame"
+            return status
+
+        h, w = depth_frame.shape[:2]
+        x1 = max(0, min(w - 1, int(status["roi"]["xmin"] * w)))
+        x2 = max(x1 + 1, min(w, int(status["roi"]["xmax"] * w)))
+        y1 = max(0, min(h - 1, int(y_min_ratio * h)))
+        y2 = max(y1 + 1, min(h, int(y_max_ratio * h)))
+        roi = depth_frame[y1:y2, x1:x2].astype(np.float32) / 1000.0
+
+        min_depth = float(self.get_parameter("min_valid_depth_m").value)
+        max_depth = float(self.get_parameter("max_valid_depth_m").value)
+        valid = roi[
+            np.isfinite(roi)
+            & (roi >= min_depth)
+            & (roi <= max_depth)
+        ]
+        status["sample_count"] = int(valid.size)
+        if valid.size == 0:
+            status["reason"] = "no valid depth samples"
+            return status
+
+        percentile = _clamp_float(
+            self.get_parameter("depth_block_percentile").value, 0.0, 100.0
+        )
+        status["valid"] = True
+        status["nearest_obstacle_m"] = round(float(np.percentile(valid, percentile)), 3)
+        status["min_depth_m"] = round(float(np.min(valid)), 3)
+        return status
+
+    def _publish_path_status(self, status):
+        msg = String()
+        msg.data = json.dumps(status)
+        self._path_pub.publish(msg)
+
+    def _maybe_publish_frame(self, frame, detections, path_status):
         if frame is None:
             return
         now = time.monotonic()
@@ -161,7 +231,7 @@ class ObjectFollowerNode(Node):
             return
         self._last_frame_pub = now
 
-        annotated = _annotate(frame, detections, self._engaged_target)
+        annotated = _annotate(frame, detections, self._engaged_target, path_status)
         ok, jpeg = cv2.imencode(
             ".jpg", annotated, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY]
         )
@@ -187,9 +257,10 @@ class ObjectFollowerNode(Node):
         super().destroy_node()
 
 
-def _annotate(frame: np.ndarray, detections, engaged_target: str) -> np.ndarray:
+def _annotate(frame: np.ndarray, detections, engaged_target: str, path_status) -> np.ndarray:
     out = frame.copy()
     h, w = out.shape[:2]
+    _draw_path_roi(out, path_status)
     for d in detections:
         x1 = int(d.bbox_xmin * w)
         y1 = int(d.bbox_ymin * h)
@@ -207,6 +278,19 @@ def _annotate(frame: np.ndarray, detections, engaged_target: str) -> np.ndarray:
     return out
 
 
+def _draw_path_roi(img: np.ndarray, path_status):
+    roi = (path_status or {}).get("roi") or {}
+    try:
+        h, w = img.shape[:2]
+        x1 = int(float(roi["xmin"]) * w)
+        x2 = int(float(roi["xmax"]) * w)
+        y1 = int(float(roi["ymin"]) * h)
+        y2 = int(float(roi["ymax"]) * h)
+    except (KeyError, TypeError, ValueError):
+        return
+    cv2.rectangle(img, (x1, y1), (x2, y2), (255, 180, 0), 1)
+
+
 def _draw_label(img: np.ndarray, text: str, anchor, color):
     x, y = anchor
     (tw, th), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
@@ -216,6 +300,14 @@ def _draw_label(img: np.ndarray, text: str, anchor, color):
         img, text, (x + 3, y_top + th + 2),
         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1, cv2.LINE_AA,
     )
+
+
+def _clamp_float(value, low: float, high: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return low
+    return max(low, min(high, parsed))
 
 
 def main():

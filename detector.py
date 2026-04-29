@@ -26,11 +26,11 @@ TARGET_CLASSES = {
     56: "chair",
 }
 
-# YOLOv6n metadata. Must match the downloaded blob.
+# YOLOv8n metadata. Must match the downloaded blob.
 INPUT_SIZE = (640, 352)
 NUM_CLASSES = 80
 COORD_SIZE = 4
-ANCHORS: list[float] = []  # YOLOv6 is anchor-free
+ANCHORS: list[float] = []  # YOLOv8 is anchor-free
 ANCHOR_MASKS: dict[str, list[int]] = {}
 IOU_THRESHOLD = 0.5
 CONFIDENCE_THRESHOLD = 0.5
@@ -77,6 +77,8 @@ class YoloSpatialDetector:
         self._blob_path = blob_path
         self._device: Optional[dai.Device] = None
         self._queue: Optional[dai.DataOutputQueue] = None
+        self._rgb_queue: Optional[dai.DataOutputQueue] = None
+        self._depth_queue: Optional[dai.DataOutputQueue] = None
 
     def __enter__(self) -> "YoloSpatialDetector":
         pipeline = self._build_pipeline()
@@ -86,6 +88,9 @@ class YoloSpatialDetector:
         )
         self._rgb_queue = self._device.getOutputQueue(
             name="rgb", maxSize=4, blocking=False
+        )
+        self._depth_queue = self._device.getOutputQueue(
+            name="depth", maxSize=4, blocking=False
         )
         return self
 
@@ -146,22 +151,32 @@ class YoloSpatialDetector:
         xout_rgb.setStreamName("rgb")
         yolo.passthrough.link(xout_rgb.input)
 
+        # Full aligned depth frame for generic path-obstacle checking.
+        xout_depth = pipeline.create(dai.node.XLinkOut)
+        xout_depth.setStreamName("depth")
+        stereo.depth.link(xout_depth.input)
+
         return pipeline
 
-    def detections(self) -> Iterator[Tuple[Optional[np.ndarray], List[Detection]]]:
-        """Yield (frame, detections) tuples synced per YOLO inference.
+    def detections(
+        self,
+    ) -> Iterator[Tuple[Optional[np.ndarray], Optional[np.ndarray], List[Detection]]]:
+        """Yield (frame, depth_frame, detections) tuples per YOLO inference.
 
         The frame is the BGR image that was fed into YOLO (so bbox coordinates
         line up). It may be None on the very first iteration if the RGB queue
-        hasn't produced a packet yet.
+        hasn't produced a packet yet. The depth frame is uint16 millimeters,
+        aligned to the RGB camera, and may likewise be None on startup.
         """
-        if self._queue is None:
+        if self._queue is None or self._rgb_queue is None or self._depth_queue is None:
             raise RuntimeError("Detector used outside of `with` block.")
         while True:
             packet = self._queue.get()  # blocks until a new detection frame arrives
             rgb_packet = self._rgb_queue.tryGet()
             frame = rgb_packet.getCvFrame() if rgb_packet is not None else None
-            yield frame, self._filter(packet.detections)
+            depth_packet = self._depth_queue.tryGet()
+            depth_frame = depth_packet.getFrame() if depth_packet is not None else None
+            yield frame, depth_frame, self._filter(packet.detections)
 
     @staticmethod
     def _filter(raw_detections) -> List[Detection]:

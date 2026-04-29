@@ -16,7 +16,7 @@ Endpoints:
   GET  /state         JSON: current detections + latest error.
 
 ROS side:
-  Subscribes: /oakd/frame_jpeg, /oakd/detections, /oakd/error
+  Subscribes: /oakd/frame_jpeg, /oakd/detections, /oakd/path_clear, /oakd/error
   Publishes:  /oakd/select_target  (forwarded to mission_controller_node)
 """
 
@@ -42,6 +42,7 @@ class WebUINode(Node):
         self._latest_jpeg: Optional[bytes] = None
         self._frame_id = 0
         self._latest_detections: list = []
+        self._latest_path_status: dict = {}
         self._latest_error: str = ""
         self._lock = threading.Lock()
 
@@ -50,6 +51,9 @@ class WebUINode(Node):
         )
         self.create_subscription(
             String, "/oakd/detections", self._on_detections, 10
+        )
+        self.create_subscription(
+            String, "/oakd/path_clear", self._on_path_status, 10
         )
         self.create_subscription(
             String, "/oakd/error", self._on_error, 10
@@ -84,6 +88,11 @@ class WebUINode(Node):
         with self._lock:
             self._latest_detections = payload.get("detections", [])
 
+    def _on_path_status(self, msg: String):
+        payload = json.loads(msg.data)
+        with self._lock:
+            self._latest_path_status = payload
+
     def _on_error(self, msg: String):
         with self._lock:
             self._latest_error = msg.data
@@ -99,6 +108,10 @@ class WebUINode(Node):
     def get_error(self) -> str:
         with self._lock:
             return self._latest_error
+
+    def get_path_status(self) -> dict:
+        with self._lock:
+            return dict(self._latest_path_status)
 
     def publish_target(self, class_name: str):
         msg = String()
@@ -146,6 +159,7 @@ def _build_app(node: WebUINode) -> Flask:
     def state():
         return jsonify(
             detections=node.get_detections(),
+            path_clear=node.get_path_status(),
             error=node.get_error(),
         )
 

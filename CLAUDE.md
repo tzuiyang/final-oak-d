@@ -28,11 +28,12 @@ follow-behavior layer on top of that stack.
 - `follower.py` — reactive P-controller turning a detection into a
   `(x_vel, y_vel, ang_vel)` command.
 - `object_follower_node.py` — owns the OAK-D, publishes
-  `/oakd/detections` every frame, subscribes to `/oakd/target`, and only
-  publishes `/person_following_cmd_vel` while engaged.
+  `/oakd/detections` and `/oakd/path_clear` every frame, subscribes to
+  `/oakd/target`, and only publishes `/person_following_cmd_vel` while engaged.
 - `mission_controller_node.py` — state machine: prints visible objects,
-  accepts user selection on `/oakd/select_target`, runs the path-clear
-  check, then engages the follower or publishes on `/oakd/error`.
+  accepts user selection on `/oakd/select_target`, checks the OAK-D depth
+  corridor plus YOLO-visible blockers, then engages the follower or publishes
+  on `/oakd/error`.
 - `web_ui_node.py` — Flask server on port 8080. Shows the annotated
   camera stream (MJPEG) and forwards click coordinates to
   `/oakd/select_target`. Clicks on empty space disengage.
@@ -58,6 +59,7 @@ follow-behavior layer on top of that stack.
     ┌──────────────── object_follower_node ──────────────┐
     │                                                    │
     │  /oakd/detections (JSON)        /oakd/frame_jpeg   │
+    │  /oakd/path_clear (JSON)                           │
     │  /person_following_cmd_vel      (Twist / JPEG out) │
     │                                                    │
     └────────────▲───────────────────────────────────────┘
@@ -86,11 +88,10 @@ ros2 topic echo /oakd/error
 
 ## Gaps remaining before the full demo
 
-- **Path-clear check is limited to YOLO-visible obstacles.** Walls, floor
-  edges, and any object outside the COCO classes we act on (currently
-  sports ball and chair) are invisible to the current check. Improving it
-  requires streaming a full depth map from the OAK-D (add an `XLinkOut`
-  for `stereo.depth`) and sampling a central ROI.
+- **Path-clear check is a simple depth ROI, not full navigation.** It samples
+  a configurable central corridor from the OAK-D depth map and blocks if that
+  corridor has a nearer obstacle than the selected target. It does not build a
+  map, plan around obstacles, or reason about floor edges outside the ROI.
 - **No richer error surface.** Errors go to stderr and `/oakd/error` only.
   If the team wants TTS / LED, wire it in the mission controller.
 - **End-to-end hardware test on the robot** — syntax is checked; behavior
@@ -141,14 +142,16 @@ needed to make the legs respond to `/cmd_vel`:
 
 - **[object_follower_node.py](object_follower_node.py)**
   Owns both detection and velocity command in one loop. It publishes
-  detections every frame, publishes annotated JPEG frames for the UI, and
-  only publishes `/person_following_cmd_vel` while a target is engaged.
-  On target change or disengage it immediately publishes a zero Twist.
+  detections and depth-corridor status every frame, publishes annotated JPEG
+  frames for the UI, and only publishes `/person_following_cmd_vel` while a
+  target is engaged. On target change or disengage it immediately publishes a
+  zero Twist.
 - **mission_controller_node.py**
   The demo's state machine:
   1. Subscribe to detections, publish the current list (topic or service).
   2. Accept user selection (CLI / ROS service / topic).
-  3. Run the YOLO-visible path-clear check in front of the robot.
+  3. Run the depth-corridor path-clear check, plus a YOLO-visible blocker
+     check, in front of the robot.
   4. Either engage the follower with the target, or publish an error.
 - `web_ui_node.py` serves the browser UI and forwards clicks to the mission
   controller.

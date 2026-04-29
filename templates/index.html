@@ -60,6 +60,7 @@
   </div>
   <div class="bar">
     <span id="status" class="pill">standing still</span>
+    <span id="path" class="pill">depth: waiting</span>
     <button id="stopBtn">stop</button>
     <span id="error" class="pill err" style="display:none"></span>
   </div>
@@ -68,6 +69,7 @@
 <script>
   const img = document.getElementById('stream');
   const statusEl = document.getElementById('status');
+  const pathEl = document.getElementById('path');
   const errorEl = document.getElementById('error');
   const stopBtn = document.getElementById('stopBtn');
 
@@ -103,6 +105,16 @@
     try {
       const r = await fetch('/state');
       const s = await r.json();
+      const p = s.path_clear || {};
+      if (p.valid && p.nearest_obstacle_m !== null && p.nearest_obstacle_m !== undefined) {
+        pathEl.textContent = `depth: ${Number(p.nearest_obstacle_m).toFixed(2)}m`;
+        pathEl.classList.add('ok');
+        pathEl.classList.remove('err');
+      } else {
+        pathEl.textContent = `depth: ${p.reason || 'waiting'}`;
+        pathEl.classList.add('err');
+        pathEl.classList.remove('ok');
+      }
       if (s.error) {
         errorEl.style.display = '';
         errorEl.textContent = s.error;
