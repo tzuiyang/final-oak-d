@@ -76,15 +76,28 @@ class Detection:
 class YoloSpatialDetector:
     """Context-managed DepthAI pipeline producing spatial YOLO detections."""
 
-    def __init__(self, blob_path: Path, *, flipped: bool = False):
+    def __init__(
+        self,
+        blob_path: Path,
+        *,
+        flipped: bool = False,
+        stream_depth: bool = False,
+    ):
         """flipped=True if the OAK-D is mounted upside-down. Rotates all three
-        cameras 180° and swaps the stereo correspondence so depth still works."""
+        cameras 180° and swaps the stereo correspondence so depth still works.
+
+        stream_depth=True streams the full aligned depth frame (640×400 u16,
+        ~15 MB/s) back to the host so callers can run their own depth ROI
+        checks. Leave it off when only the YOLO spatial coords are needed —
+        the extra USB traffic was the dominant source of pipeline stalls on
+        the Pi (multi-second gaps in the detection stream)."""
         if not blob_path.exists():
             raise FileNotFoundError(
                 f"Model blob not found at {blob_path}. Run download_model.py first."
             )
         self._blob_path = blob_path
         self._flipped = flipped
+        self._stream_depth = stream_depth
         self._device: Optional[dai.Device] = None
         self._queue: Optional[dai.DataOutputQueue] = None
         self._rgb_queue: Optional[dai.DataOutputQueue] = None
@@ -103,9 +116,10 @@ class YoloSpatialDetector:
         self._rgb_queue = self._device.getOutputQueue(
             name="rgb", maxSize=1, blocking=False
         )
-        self._depth_queue = self._device.getOutputQueue(
-            name="depth", maxSize=1, blocking=False
-        )
+        if self._stream_depth:
+            self._depth_queue = self._device.getOutputQueue(
+                name="depth", maxSize=1, blocking=False
+            )
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
@@ -179,10 +193,13 @@ class YoloSpatialDetector:
         xout_rgb.setStreamName("rgb")
         yolo.passthrough.link(xout_rgb.input)
 
-        # Full aligned depth frame for generic path-obstacle checking.
-        xout_depth = pipeline.create(dai.node.XLinkOut)
-        xout_depth.setStreamName("depth")
-        stereo.depth.link(xout_depth.input)
+        # Full aligned depth frame for generic path-obstacle checking. Only
+        # wired up on demand — the 640×400 u16 stream is ~15 MB/s and on the
+        # Pi this was bandwidth-throttling the detection output to ~0.5 Hz.
+        if self._stream_depth:
+            xout_depth = pipeline.create(dai.node.XLinkOut)
+            xout_depth.setStreamName("depth")
+            stereo.depth.link(xout_depth.input)
 
         return pipeline
 
@@ -196,14 +213,17 @@ class YoloSpatialDetector:
         hasn't produced a packet yet. The depth frame is uint16 millimeters,
         aligned to the RGB camera, and may likewise be None on startup.
         """
-        if self._queue is None or self._rgb_queue is None or self._depth_queue is None:
+        if self._queue is None or self._rgb_queue is None:
             raise RuntimeError("Detector used outside of `with` block.")
         while True:
             packet = self._queue.get()  # blocks until a new detection frame arrives
             rgb_packet = self._rgb_queue.tryGet()
             frame = rgb_packet.getCvFrame() if rgb_packet is not None else None
-            depth_packet = self._depth_queue.tryGet()
-            depth_frame = depth_packet.getFrame() if depth_packet is not None else None
+            depth_frame = None
+            if self._depth_queue is not None:
+                depth_packet = self._depth_queue.tryGet()
+                if depth_packet is not None:
+                    depth_frame = depth_packet.getFrame()
             yield frame, depth_frame, self._filter(packet.detections)
 
     @staticmethod

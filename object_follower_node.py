@@ -68,7 +68,28 @@ class ObjectFollowerNode(Node):
         self.declare_parameter("min_valid_depth_m", 0.15)
         self.declare_parameter("max_valid_depth_m", 5.0)
         self.declare_parameter("depth_block_percentile", 10.0)
+        # Floor rejection in the depth corridor. With the OAK-D mounted
+        # ~20 cm above the ground on the Pupper, the lower half of the
+        # image is dominated by floor returns at 0.4–1.0 m, which the
+        # corridor was reporting as a permanent obstacle. We reject
+        # samples whose inferred 3-D Y (camera-frame, +Y down) sits at or
+        # below floor-minus-tolerance — i.e., everything from a few cm
+        # above the floor downward. Set camera_height_m or
+        # floor_tolerance_m to 0 to disable.
+        self.declare_parameter("camera_height_m", 0.20)
+        self.declare_parameter("floor_tolerance_m", 0.05)
+        # OAK-D Lite mono cam at 400P with depth aligned to colour produces
+        # a 640x400 depth frame; HFOV ~71° gives fy ≈ 449 px and the
+        # principal point sits at the geometric centre of the frame.
+        self.declare_parameter("depth_focal_y_px", 449.0)
+        self.declare_parameter("depth_principal_cy_ratio", 0.5)
         self.declare_parameter("camera_flipped", False)
+        # Stream the full aligned depth frame back to the host. Required only
+        # when /oakd/path_clear needs real samples (i.e. mission_controller's
+        # enable_depth_path_check is true). Off by default — the stream is
+        # ~15 MB/s of USB traffic and was throttling YOLO output to ~0.5 Hz
+        # on the Pi.
+        self.declare_parameter("enable_depth_stream", False)
         # Throttle cmd_vel publishing. The walking policy needs steady input
         # to maintain a gait (it twitches in place if the input is too
         # sparse), so keep this near 10 Hz. Set to 0 to publish on every
@@ -137,12 +158,15 @@ class ObjectFollowerNode(Node):
         )
 
         flipped = bool(self.get_parameter("camera_flipped").value)
-        self._detector_ctx = YoloSpatialDetector(blob_path, flipped=flipped)
+        stream_depth = bool(self.get_parameter("enable_depth_stream").value)
+        self._detector_ctx = YoloSpatialDetector(
+            blob_path, flipped=flipped, stream_depth=stream_depth
+        )
         self._detector = self._detector_ctx.__enter__()
         self._detection_stream = self._detector.detections()
         self.get_logger().info(
             f"OAK-D pipeline started (model={blob_path}, cmd_vel={cmd_topic}, "
-            f"flipped={flipped})"
+            f"flipped={flipped}, depth_stream={stream_depth})"
         )
 
         self._timer = self.create_timer(
@@ -293,12 +317,32 @@ class ObjectFollowerNode(Node):
 
         min_depth = float(self.get_parameter("min_valid_depth_m").value)
         max_depth = float(self.get_parameter("max_valid_depth_m").value)
-        valid = roi[
-            np.isfinite(roi)
-            & (roi >= min_depth)
-            & (roi <= max_depth)
-        ]
+        in_range = np.isfinite(roi) & (roi >= min_depth) & (roi <= max_depth)
+
+        # Reject floor pixels: inferred camera-frame Y = (v - cy) / fy * Z.
+        # Anything within `floor_tolerance` of `camera_height` (or below it,
+        # i.e. physically beneath the floor due to noise) is masked out.
+        camera_height = float(self.get_parameter("camera_height_m").value)
+        floor_tol = float(self.get_parameter("floor_tolerance_m").value)
+        fy_px = float(self.get_parameter("depth_focal_y_px").value)
+        cy_ratio = _clamp_float(
+            self.get_parameter("depth_principal_cy_ratio").value, 0.0, 1.0
+        )
+        floor_filter_active = (
+            camera_height > 0.0 and floor_tol > 0.0 and fy_px > 0.0
+        )
+        floor_mask = np.zeros_like(roi, dtype=bool)
+        if floor_filter_active:
+            cy_px = cy_ratio * h
+            rows = np.arange(y1, y2, dtype=np.float32)
+            rel_v = ((rows - cy_px) / fy_px)[:, None]  # shape (roi_h, 1)
+            inferred_y = rel_v * roi  # broadcast over columns
+            floor_mask = inferred_y > (camera_height - floor_tol)
+
+        keep = in_range & ~floor_mask
+        valid = roi[keep]
         status["sample_count"] = int(valid.size)
+        status["floor_filtered"] = int(np.count_nonzero(floor_mask & in_range))
         if valid.size == 0:
             status["reason"] = "no valid depth samples"
             return status
