@@ -154,10 +154,19 @@ class YoloSpatialDetector:
             mono_right.setImageOrientation(rotate_180)
 
         stereo = pipeline.create(dai.node.StereoDepth)
-        stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
+        # ROBOTICS preset (depthai 2.30+) is tuned for mobile-robot follow
+        # tasks: confidence threshold and post-processing biased toward
+        # rejecting wrong matches over filling holes. With subpixel
+        # disparity on top (~5x finer than the integer-pixel default), this
+        # was the difference between z bouncing 0.6m -> 8.6m on the same
+        # person and a stable read at typical follow distances.
+        stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.ROBOTICS)
         stereo.setDepthAlign(dai.CameraBoardSocket.CAM_A)  # align depth to color
         stereo.setLeftRightCheck(True)
-        stereo.setSubpixel(False)
+        stereo.setSubpixel(True)
+        # 5x5 median knocks out single-pixel disparity outliers before the
+        # YOLO node samples its bbox region.
+        stereo.initialConfig.setMedianFilter(dai.MedianFilter.KERNEL_5x5)
         # When flipped, the physically-left lens is rotated to spatially-right
         # (and vice versa). Swap the stereo inputs so triangulation still has
         # the actual left view feeding stereo.left.
@@ -177,7 +186,18 @@ class YoloSpatialDetector:
         yolo.setAnchors(ANCHORS)
         yolo.setAnchorMasks(ANCHOR_MASKS)
         yolo.setIouThreshold(IOU_THRESHOLD)
-        yolo.setBoundingBoxScaleFactor(0.5)
+        # Sample only the inner 30% of each YOLO bbox for spatial coords. A
+        # person bbox is loose around the silhouette and usually contains a
+        # lot of background pixels at the edges; the 0.5 default was letting
+        # those background pixels dominate the depth median. 0.3 keeps the
+        # sample tightly on the torso.
+        yolo.setBoundingBoxScaleFactor(0.3)
+        # MEDIAN over the sampled region is robust to outliers (a noisy
+        # near-pixel or a hole reading 0); AVERAGE (the default) gets
+        # dragged around by both.
+        yolo.setSpatialCalculationAlgorithm(
+            dai.SpatialLocationCalculatorAlgorithm.MEDIAN
+        )
         yolo.setDepthLowerThreshold(100)    # mm; ignore returns closer than 10 cm
         yolo.setDepthUpperThreshold(10_000) # mm; ignore returns farther than 10 m
         cam.preview.link(yolo.input)
