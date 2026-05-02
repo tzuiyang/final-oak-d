@@ -102,8 +102,14 @@ def start_upstream(pupper_ws: Path) -> subprocess.Popen:
     # so it's the right entry point. pupper_minimal.launch.py is kept in this
     # repo as a fallback for stock upstream installs that still bundle the
     # conflicting nodes — see UPSTREAM_LAUNCH_FILE / --use-minimal flag.
-    cmd = _sourced(setup, "ros2 launch neural_controller launch.py")
-    print(f"[deploy] Launching upstream neural_controller from {pupper_ws}")
+    #
+    # teleop:=False — disable teleop_twist_joy. With cmd_vel_mux removed on
+    # this Pi, teleop_twist_joy publishes zero to /cmd_vel ~50 Hz whenever
+    # the sticks are centered, which drowns out our follower's 10 Hz commands
+    # and reduces the robot to twitching. The L1 E-stop still works because
+    # estop_controller reads /joy directly, independent of teleop.
+    cmd = _sourced(setup, "ros2 launch neural_controller launch.py teleop:=False")
+    print(f"[deploy] Launching upstream neural_controller (teleop disabled) from {pupper_ws}")
     # Separate process group so Ctrl+C on us doesn't kill it implicitly —
     # we handle its shutdown explicitly in stop_upstream().
     return subprocess.Popen(cmd, start_new_session=True)
