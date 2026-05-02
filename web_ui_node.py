@@ -8,15 +8,18 @@ select it as the target. Clicks on empty space disengage.
 
 Endpoints:
   GET  /                       HTML page
-  GET  /stream.mjpg            MJPEG stream of /oakd/frame_jpeg
+  GET  /frame.jpg              Latest annotated JPEG (one shot). The page polls
+                               this every ~150 ms — strictly always-latest, no
+                               MJPEG buffering chain that would accumulate lag.
+  GET  /stream.mjpg            MJPEG fallback (kept for clients that prefer it,
+                               but deprecated — it visibly stalls behind real
+                               time on weak WiFi).
   POST /select       {x,y}     Normalized click coords (0..1). Routes to the
                                smallest detection containing the point; empty
                                space disengages.
   POST /select_class {class_name}
                                Engage by class name without needing a precise
-                               click. Used by the in-page target buttons —
-                               more reliable than clicking a moving bbox over
-                               a laggy stream.
+                               click. Used by the in-page target buttons.
   POST /disengage              Clears the target.
   GET  /state                  JSON: current detections + path_clear + error.
 
@@ -33,8 +36,19 @@ from typing import Optional
 import rclpy
 from flask import Flask, Response, jsonify, render_template, request
 from rclpy.node import Node
+from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import CompressedImage
 from std_msgs.msg import String
+
+
+# Best-effort QoS for streaming topics — drop stale messages instead of
+# queueing them. RELIABLE (the default) will buffer on the publisher when the
+# subscriber falls behind, which on weak WiFi shows up as multi-second lag.
+_STREAMING_QOS = QoSProfile(
+    depth=1,
+    reliability=ReliabilityPolicy.BEST_EFFORT,
+    history=HistoryPolicy.KEEP_LAST,
+)
 
 
 class WebUINode(Node):
@@ -51,17 +65,17 @@ class WebUINode(Node):
         self._latest_error: str = ""
         self._lock = threading.Lock()
 
-        # Streaming topics: depth=1 so we always show the freshest snapshot,
-        # never a queue of stale frames. Errors keep depth=10 so we don't
-        # drop a transient warning between polls.
+        # Streaming topics use BEST_EFFORT QoS so a slow subscriber drops
+        # stale messages instead of buffering them. Errors keep RELIABLE
+        # depth=10 so a transient warning isn't dropped between polls.
         self.create_subscription(
-            CompressedImage, "/oakd/frame_jpeg", self._on_frame, 1
+            CompressedImage, "/oakd/frame_jpeg", self._on_frame, _STREAMING_QOS
         )
         self.create_subscription(
-            String, "/oakd/detections", self._on_detections, 1
+            String, "/oakd/detections", self._on_detections, _STREAMING_QOS
         )
         self.create_subscription(
-            String, "/oakd/path_clear", self._on_path_status, 1
+            String, "/oakd/path_clear", self._on_path_status, _STREAMING_QOS
         )
         self.create_subscription(
             String, "/oakd/error", self._on_error, 10
@@ -133,6 +147,17 @@ def _build_app(node: WebUINode) -> Flask:
     @app.route("/")
     def index():
         return render_template("index.html")
+
+    @app.route("/frame.jpg")
+    def frame():
+        jpeg, _frame_id = node.get_frame()
+        if jpeg is None:
+            return Response(status=503)
+        resp = Response(jpeg, mimetype="image/jpeg")
+        # No caching — every poll must fetch the freshest frame.
+        resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        resp.headers["Pragma"] = "no-cache"
+        return resp
 
     @app.route("/stream.mjpg")
     def stream():

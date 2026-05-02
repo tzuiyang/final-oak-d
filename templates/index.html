@@ -80,7 +80,7 @@
 <body>
   <h1>OAK-D follow demo — click a button below or click an object in the stream to follow</h1>
   <div class="wrap">
-    <img id="stream" src="/stream.mjpg" alt="OAK-D stream">
+    <img id="stream" alt="OAK-D stream">
   </div>
   <div class="bar">
     <span id="status" class="pill">standing still</span>
@@ -99,6 +99,16 @@
   const stopBtn = document.getElementById('stopBtn');
   const targetsEl = document.getElementById('targets');
   let engagedClass = '';
+
+  // Self-pacing frame loop: request the next frame only after the previous
+  // one finishes loading. If the network is slow, requests slow down too —
+  // never an MJPEG-style buildup of stale frames.
+  function loadNextFrame() {
+    img.src = '/frame.jpg?t=' + Date.now();
+  }
+  img.addEventListener('load', () => setTimeout(loadNextFrame, 60));
+  img.addEventListener('error', () => setTimeout(loadNextFrame, 200));
+  loadNextFrame();
 
   async function selectClass(name) {
     await fetch('/select_class', {

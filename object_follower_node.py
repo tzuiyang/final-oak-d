@@ -26,8 +26,19 @@ import numpy as np
 import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
+from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import CompressedImage
 from std_msgs.msg import String
+
+
+# Best-effort streaming QoS — drop stale messages instead of buffering them
+# when subscribers fall behind. Must match the subscribers in mission_controller
+# and web_ui or the connection is silently rejected.
+_STREAMING_QOS = QoSProfile(
+    depth=1,
+    reliability=ReliabilityPolicy.BEST_EFFORT,
+    history=HistoryPolicy.KEEP_LAST,
+)
 
 from detector import YoloSpatialDetector
 from follower import FollowerConfig, ObjectFollower, VelocityCommand
@@ -84,12 +95,15 @@ class ObjectFollowerNode(Node):
 
         cmd_topic = self.get_parameter("cmd_vel_topic").value
         self._cmd_pub = self.create_publisher(Twist, cmd_topic, 10)
-        # Streaming topics use depth=1 so subscribers always see the latest
-        # snapshot. Old frames sitting in a 10-deep queue produce visible
-        # multi-second latency in the UI when WiFi hiccups.
-        self._det_pub = self.create_publisher(String, "/oakd/detections", 1)
-        self._path_pub = self.create_publisher(String, "/oakd/path_clear", 1)
-        self._frame_pub = self.create_publisher(CompressedImage, "/oakd/frame_jpeg", 1)
+        # Streaming topics use BEST_EFFORT so a slow subscriber drops stale
+        # messages instead of letting them queue. RELIABLE QoS would buffer
+        # on the publisher when the subscriber falls behind, which on weak
+        # WiFi shows up as multi-second UI latency.
+        self._det_pub = self.create_publisher(String, "/oakd/detections", _STREAMING_QOS)
+        self._path_pub = self.create_publisher(String, "/oakd/path_clear", _STREAMING_QOS)
+        self._frame_pub = self.create_publisher(
+            CompressedImage, "/oakd/frame_jpeg", _STREAMING_QOS
+        )
         self._target_sub = self.create_subscription(
             String, "/oakd/target", self._on_target, 10
         )

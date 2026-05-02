@@ -22,7 +22,17 @@ import json
 
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import String
+
+
+# Must match the publisher in object_follower_node — best-effort streaming
+# QoS so we always evaluate against the latest snapshot, never a queue.
+_STREAMING_QOS = QoSProfile(
+    depth=1,
+    reliability=ReliabilityPolicy.BEST_EFFORT,
+    history=HistoryPolicy.KEEP_LAST,
+)
 
 
 class MissionControllerNode(Node):
@@ -47,10 +57,14 @@ class MissionControllerNode(Node):
         self._miss_count = 0
         self._last_error = ""
 
-        # Streaming topics: depth=1 so each evaluate() sees the latest
-        # snapshot, not a backlog. Selection commands keep depth=10.
-        self.create_subscription(String, "/oakd/detections", self._on_detections, 1)
-        self.create_subscription(String, "/oakd/path_clear", self._on_path_status, 1)
+        # Streaming topics: BEST_EFFORT QoS so each evaluate() runs on the
+        # latest snapshot instead of a backlog. Selection stays RELIABLE.
+        self.create_subscription(
+            String, "/oakd/detections", self._on_detections, _STREAMING_QOS
+        )
+        self.create_subscription(
+            String, "/oakd/path_clear", self._on_path_status, _STREAMING_QOS
+        )
         self.create_subscription(String, "/oakd/select_target", self._on_select, 10)
 
         self._target_pub = self.create_publisher(String, "/oakd/target", 10)
