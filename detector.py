@@ -35,9 +35,12 @@ COORD_SIZE = 4
 ANCHORS: list[float] = []  # YOLOv8 is anchor-free
 ANCHOR_MASKS: dict[str, list[int]] = {}
 IOU_THRESHOLD = 0.5
-# 0.35 catches mid-range objects that hovered around the previous 0.5 cutoff
-# (e.g. a chair at ~2 m on the small YOLOv8n input).
-CONFIDENCE_THRESHOLD = 0.35
+# 0.25 keeps detections landing at typical room distances (1–4 m). YOLOv8n
+# is small and bottles in particular score low; if we set this higher, the
+# follower sees so many empty frames that it can't sustain a walk command.
+# More false positives at this threshold, but bottles-only filtering keeps
+# them mostly contained.
+CONFIDENCE_THRESHOLD = 0.25
 
 
 @dataclass
