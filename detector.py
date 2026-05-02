@@ -26,7 +26,6 @@ import numpy as np
 # needed.
 TARGET_CLASSES: dict[int, str] = {
     0: "person",
-    39: "bottle",
 }
 
 # YOLOv8n metadata. Must match the downloaded blob.
