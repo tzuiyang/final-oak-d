@@ -81,20 +81,17 @@ class ObjectFollower:
         self._frames_since_detection = 0
 
         # Forward velocity: positive when farther than target distance, zero
-        # otherwise. The walking policy carries 200–500 ms of gait inertia
-        # after we command zero, so to actually stop near target_distance we
-        # back off well before reaching it. Quadratic ramp on the error
-        # term: full speed at >1 m beyond target, gentle near it.
+        # otherwise. Linear ramp on the distance error — keeping the speed
+        # cap low (max_forward_vel = 0.3 m/s) is what gives the walking
+        # policy time to stop without overshooting; an aggressive ramp
+        # function on top of that just makes the robot crawl at typical
+        # follow distances.
         distance_error = target.distance - self._cfg.target_distance
-        if distance_error <= 0:
-            x_vel = 0.0
-        else:
-            ramp = min(distance_error, 1.0) ** 2  # 0..1 over the last meter
-            x_vel = _clamp(
-                self._cfg.k_forward * ramp,
-                0.0,
-                self._cfg.max_forward_vel,
-            )
+        x_vel = _clamp(
+            self._cfg.k_forward * max(0.0, distance_error),
+            0.0,
+            self._cfg.max_forward_vel,
+        )
 
         # Yaw: turn toward the object. DepthAI bearing is positive when object
         # is to the right, so we negate (positive ang_vel in Pupper = turn left).
