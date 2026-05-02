@@ -20,11 +20,12 @@ from typing import Iterator, List, Optional, Tuple
 import depthai as dai
 import numpy as np
 
-# Restricted to bottles only for the demo. Other YOLO classes still light up
-# inside the network on the OAK-D, but they're filtered out before leaving
-# the detector. To re-expose more classes, add their (id, name) entries below
-# (full COCO map is in git history — commit 418c795).
+# Selectable follow targets. Other YOLO classes still light up inside the
+# network on the OAK-D but are filtered out before leaving the detector. The
+# full COCO map is in git history (commit 418c795); add entries here as
+# needed.
 TARGET_CLASSES: dict[int, str] = {
+    0: "person",
     39: "bottle",
 }
 
