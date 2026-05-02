@@ -55,6 +55,7 @@ class ObjectFollower:
     def __init__(self, config: FollowerConfig):
         self._cfg = config
         self._frames_since_detection = 0
+        self._last_cmd = VelocityCommand.zero()
 
     def step(self, detections: List[Detection]) -> VelocityCommand:
         target = self._pick_target(detections)
@@ -62,9 +63,13 @@ class ObjectFollower:
         if target is None:
             self._frames_since_detection += 1
             if self._frames_since_detection >= self._cfg.timeout_frames:
-                return VelocityCommand.zero()
-            # Brief dropouts: hold still rather than drift on stale commands
-            return VelocityCommand.zero()
+                self._last_cmd = VelocityCommand.zero()
+                return self._last_cmd
+            # Brief dropouts: keep walking with the last command rather than
+            # zeroing every empty frame. Zero-on-every-miss made the cmd_vel
+            # flicker between the target velocity and zero, which prevents
+            # the walking policy from maintaining a gait (twitches in place).
+            return self._last_cmd
 
         self._frames_since_detection = 0
 
@@ -84,7 +89,8 @@ class ObjectFollower:
             self._cfg.max_yaw_vel,
         )
 
-        return VelocityCommand(x_vel=x_vel, y_vel=0.0, ang_vel=ang_vel)
+        self._last_cmd = VelocityCommand(x_vel=x_vel, y_vel=0.0, ang_vel=ang_vel)
+        return self._last_cmd
 
     def _pick_target(self, detections: List[Detection]) -> Optional[Detection]:
         if not detections:

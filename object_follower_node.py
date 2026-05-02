@@ -67,11 +67,11 @@ class ObjectFollowerNode(Node):
         self.declare_parameter("max_valid_depth_m", 5.0)
         self.declare_parameter("depth_block_percentile", 10.0)
         self.declare_parameter("camera_flipped", False)
-        # Throttle cmd_vel publishing so the policy commits to one heading/
-        # speed for ~this long before getting a fresh command. Disengage and
-        # target switches still bypass the rate limit (zero Twist goes out
-        # immediately).
-        self.declare_parameter("command_period_s", 1.0)
+        # Throttle cmd_vel publishing. The walking policy needs steady input
+        # to maintain a gait (it twitches in place if the input is too
+        # sparse), so keep this near 10 Hz. Set to 0 to publish on every
+        # detection.
+        self.declare_parameter("command_period_s", 0.1)
 
         cfg = FollowerConfig(
             target_distance=self.get_parameter("target_distance").value,
