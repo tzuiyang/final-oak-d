@@ -56,6 +56,11 @@ class ObjectFollowerNode(Node):
         self.declare_parameter("max_valid_depth_m", 5.0)
         self.declare_parameter("depth_block_percentile", 10.0)
         self.declare_parameter("camera_flipped", False)
+        # Throttle cmd_vel publishing so the policy commits to one heading/
+        # speed for ~this long before getting a fresh command. Disengage and
+        # target switches still bypass the rate limit (zero Twist goes out
+        # immediately).
+        self.declare_parameter("command_period_s", 1.0)
 
         cfg = FollowerConfig(
             target_distance=self.get_parameter("target_distance").value,
@@ -75,6 +80,7 @@ class ObjectFollowerNode(Node):
         self._engaged_target = ""
         self._had_target_in_view = False
         self._last_frame_pub = 0.0
+        self._last_cmd_pub = 0.0
 
         cmd_topic = self.get_parameter("cmd_vel_topic").value
         self._cmd_pub = self.create_publisher(Twist, cmd_topic, 10)
@@ -104,7 +110,9 @@ class ObjectFollowerNode(Node):
             self.get_logger().info(f"Engaging follower on target: {new}")
         else:
             self.get_logger().info("Disengaged — standing still")
-        self._publish_velocity(VelocityCommand.zero())
+        # Force the zero out regardless of the rate limit — disengage must
+        # be immediate for safety.
+        self._publish_velocity(VelocityCommand.zero(), force=True)
         self._engaged_target = new
         self._had_target_in_view = False
 
@@ -248,7 +256,15 @@ class ObjectFollowerNode(Node):
         msg.data = jpeg.tobytes()
         self._frame_pub.publish(msg)
 
-    def _publish_velocity(self, cmd: VelocityCommand):
+    def _publish_velocity(self, cmd: VelocityCommand, *, force: bool = False):
+        if not force:
+            period = float(self.get_parameter("command_period_s").value)
+            now = time.monotonic()
+            if now - self._last_cmd_pub < period:
+                return
+            self._last_cmd_pub = now
+        else:
+            self._last_cmd_pub = time.monotonic()
         twist = Twist()
         twist.linear.x = cmd.x_vel
         twist.linear.y = cmd.y_vel

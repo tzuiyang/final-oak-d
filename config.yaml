@@ -30,6 +30,11 @@ object_follower:
     # 180° and swaps the stereo correspondence so depth still works.
     camera_flipped: true
 
+    # Throttle cmd_vel publishing — the follower commits to one heading/speed
+    # for this long before sending a new command. Disengage and target
+    # switches still publish a zero Twist immediately.
+    command_period_s: 1.0
+
     # Depth ROI used for generic obstacle checks. Coordinates are normalized
     # image ratios; the ROI is a forward corridor in the aligned depth frame.
     depth_corridor_width_ratio: 0.35
