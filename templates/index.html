@@ -83,6 +83,7 @@
     <img id="stream" alt="OAK-D stream">
   </div>
   <div class="bar">
+    <span id="mode" class="pill">mode: ?</span>
     <span id="status" class="pill">standing still</span>
     <span id="path" class="pill">depth: waiting</span>
     <button id="stopBtn">stop</button>
@@ -98,6 +99,7 @@
   const errorEl = document.getElementById('error');
   const stopBtn = document.getElementById('stopBtn');
   const targetsEl = document.getElementById('targets');
+  const modeEl = document.getElementById('mode');
   let engagedClass = '';
 
   // Self-pacing frame loop: request the next frame only after the previous
@@ -187,6 +189,10 @@
       } else {
         errorEl.style.display = 'none';
       }
+      const mode = s.mode || 'AUTO';
+      modeEl.textContent = `mode: ${mode}`;
+      modeEl.classList.remove('ok', 'err');
+      modeEl.classList.add(mode === 'MANUAL' ? 'err' : 'ok');
       renderTargets(s.detections);
     } catch (e) { /* transient; retry next tick */ }
   }

@@ -112,6 +112,9 @@ class ObjectFollowerNode(Node):
         self._frame_pub = self.create_publisher(
             CompressedImage, "/oakd/frame_jpeg", _STREAMING_QOS
         )
+        # /oakd/mode is RELIABLE so the UI is guaranteed to see toggles
+        # even if it just connected.
+        self._mode_pub = self.create_publisher(String, "/oakd/mode", 10)
         self._target_sub = self.create_subscription(
             String, "/oakd/target", self._on_target, 10
         )
@@ -129,6 +132,13 @@ class ObjectFollowerNode(Node):
         )
 
         self._timer = self.create_timer(0.01, self._tick)
+        # Publish the initial mode so the UI shows AUTO from the start.
+        self._publish_mode()
+
+    def _publish_mode(self):
+        msg = String()
+        msg.data = "MANUAL" if self._manual_mode else "AUTO"
+        self._mode_pub.publish(msg)
 
     def _on_target(self, msg: String):
         new = (msg.data or "").strip()
@@ -157,6 +167,7 @@ class ObjectFollowerNode(Node):
             self._manual_mode = not self._manual_mode
             mode = "MANUAL" if self._manual_mode else "AUTO"
             self.get_logger().info(f"Mode -> {mode}")
+            self._publish_mode()
             # Stop momentum during the transition.
             self._publish_velocity(VelocityCommand.zero(), force=True)
         self._prev_toggle_button = pressed

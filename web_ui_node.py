@@ -63,6 +63,7 @@ class WebUINode(Node):
         self._latest_detections: list = []
         self._latest_path_status: dict = {}
         self._latest_error: str = ""
+        self._latest_mode: str = "AUTO"
         self._lock = threading.Lock()
 
         # Streaming topics use BEST_EFFORT QoS so a slow subscriber drops
@@ -79,6 +80,9 @@ class WebUINode(Node):
         )
         self.create_subscription(
             String, "/oakd/error", self._on_error, 10
+        )
+        self.create_subscription(
+            String, "/oakd/mode", self._on_mode, 10
         )
         self._select_pub = self.create_publisher(
             String, "/oakd/select_target", 10
@@ -119,6 +123,10 @@ class WebUINode(Node):
         with self._lock:
             self._latest_error = msg.data
 
+    def _on_mode(self, msg: String):
+        with self._lock:
+            self._latest_mode = msg.data or "AUTO"
+
     def get_frame(self) -> tuple[Optional[bytes], int]:
         with self._lock:
             return self._latest_jpeg, self._frame_id
@@ -134,6 +142,10 @@ class WebUINode(Node):
     def get_path_status(self) -> dict:
         with self._lock:
             return dict(self._latest_path_status)
+
+    def get_mode(self) -> str:
+        with self._lock:
+            return self._latest_mode
 
     def publish_target(self, class_name: str):
         msg = String()
@@ -204,6 +216,7 @@ def _build_app(node: WebUINode) -> Flask:
             detections=node.get_detections(),
             path_clear=node.get_path_status(),
             error=node.get_error(),
+            mode=node.get_mode(),
         )
 
     return app
