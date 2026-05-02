@@ -33,8 +33,8 @@ from detector import YoloSpatialDetector
 from follower import FollowerConfig, ObjectFollower, VelocityCommand
 
 
-FRAME_PUBLISH_PERIOD_S = 1.0 / 15.0  # cap at 15 fps to keep WiFi / CPU happy
-JPEG_QUALITY = 75
+FRAME_PUBLISH_PERIOD_S = 1.0 / 8.0  # 8 fps is plenty for the UI and halves WiFi load
+JPEG_QUALITY = 50
 
 
 class ObjectFollowerNode(Node):
@@ -55,6 +55,7 @@ class ObjectFollowerNode(Node):
         self.declare_parameter("min_valid_depth_m", 0.15)
         self.declare_parameter("max_valid_depth_m", 5.0)
         self.declare_parameter("depth_block_percentile", 10.0)
+        self.declare_parameter("camera_flipped", False)
 
         cfg = FollowerConfig(
             target_distance=self.get_parameter("target_distance").value,
@@ -84,11 +85,13 @@ class ObjectFollowerNode(Node):
             String, "/oakd/target", self._on_target, 10
         )
 
-        self._detector_ctx = YoloSpatialDetector(blob_path)
+        flipped = bool(self.get_parameter("camera_flipped").value)
+        self._detector_ctx = YoloSpatialDetector(blob_path, flipped=flipped)
         self._detector = self._detector_ctx.__enter__()
         self._detection_stream = self._detector.detections()
         self.get_logger().info(
-            f"OAK-D pipeline started (model={blob_path}, cmd_vel={cmd_topic})"
+            f"OAK-D pipeline started (model={blob_path}, cmd_vel={cmd_topic}, "
+            f"flipped={flipped})"
         )
 
         self._timer = self.create_timer(0.01, self._tick)

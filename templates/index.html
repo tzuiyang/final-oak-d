@@ -50,11 +50,35 @@
     cursor: pointer;
   }
   button:hover { background: #2a2a2a; }
+  button.target {
+    background: #1a3a1a;
+    border-color: #3a6;
+    color: #cfc;
+  }
+  button.target:hover { background: #2a4a2a; }
+  button.target.engaged {
+    background: #2d6a2d;
+    border-color: #5c5;
+    color: #fff;
+  }
+  #targets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+    max-width: 900px;
+  }
+  #targets:empty::before {
+    content: "(no objects detected yet)";
+    color: #666;
+    font-size: 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
   .hint { color: #888; font-size: 12px; margin-top: 4px; }
 </style>
 </head>
 <body>
-  <h1>OAK-D follow demo — click an object to follow, click empty space to stop</h1>
+  <h1>OAK-D follow demo — click a button below or click an object in the stream to follow</h1>
   <div class="wrap">
     <img id="stream" src="/stream.mjpg" alt="OAK-D stream">
   </div>
@@ -64,7 +88,8 @@
     <button id="stopBtn">stop</button>
     <span id="error" class="pill err" style="display:none"></span>
   </div>
-  <div class="hint">Tip: green box = engaged target, amber box = detected but not selected.</div>
+  <div id="targets"></div>
+  <div class="hint">Tip: buttons above are the most reliable way to select. Green outline = currently engaged.</div>
 
 <script>
   const img = document.getElementById('stream');
@@ -72,6 +97,34 @@
   const pathEl = document.getElementById('path');
   const errorEl = document.getElementById('error');
   const stopBtn = document.getElementById('stopBtn');
+  const targetsEl = document.getElementById('targets');
+  let engagedClass = '';
+
+  async function selectClass(name) {
+    await fetch('/select_class', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({class_name: name}),
+    });
+    setStatus(`requested: ${name}`, 'ok');
+  }
+
+  function renderTargets(detections) {
+    const byClass = new Map();
+    for (const d of detections || []) {
+      const cur = byClass.get(d.class_name);
+      if (!cur || d.distance < cur.distance) byClass.set(d.class_name, d);
+    }
+    const list = Array.from(byClass.values()).sort((a, b) => a.distance - b.distance);
+    while (targetsEl.firstChild) targetsEl.removeChild(targetsEl.firstChild);
+    for (const d of list) {
+      const btn = document.createElement('button');
+      btn.className = 'target' + (d.class_name === engagedClass ? ' engaged' : '');
+      btn.textContent = `${d.class_name} ${Number(d.distance).toFixed(2)}m`;
+      btn.addEventListener('click', () => selectClass(d.class_name));
+      targetsEl.appendChild(btn);
+    }
+  }
 
   function setStatus(text, kind) {
     statusEl.textContent = text;
@@ -90,14 +143,17 @@
     });
     const body = await res.json();
     if (body.disengaged) {
+      engagedClass = '';
       setStatus('stopped (no object at click)');
     } else if (body.ok) {
+      engagedClass = body.class_name;
       setStatus(`requested: ${body.class_name}`, 'ok');
     }
   });
 
   stopBtn.addEventListener('click', async () => {
     await fetch('/disengage', {method: 'POST'});
+    engagedClass = '';
     setStatus('stopped');
   });
 
@@ -121,9 +177,10 @@
       } else {
         errorEl.style.display = 'none';
       }
+      renderTargets(s.detections);
     } catch (e) { /* transient; retry next tick */ }
   }
-  setInterval(pollState, 1000);
+  setInterval(pollState, 500);
   pollState();
 </script>
 </body>

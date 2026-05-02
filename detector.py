@@ -86,12 +86,15 @@ class Detection:
 class YoloSpatialDetector:
     """Context-managed DepthAI pipeline producing spatial YOLO detections."""
 
-    def __init__(self, blob_path: Path):
+    def __init__(self, blob_path: Path, *, flipped: bool = False):
+        """flipped=True if the OAK-D is mounted upside-down. Rotates all three
+        cameras 180° and swaps the stereo correspondence so depth still works."""
         if not blob_path.exists():
             raise FileNotFoundError(
                 f"Model blob not found at {blob_path}. Run download_model.py first."
             )
         self._blob_path = blob_path
+        self._flipped = flipped
         self._device: Optional[dai.Device] = None
         self._queue: Optional[dai.DataOutputQueue] = None
         self._rgb_queue: Optional[dai.DataOutputQueue] = None
@@ -119,6 +122,8 @@ class YoloSpatialDetector:
     def _build_pipeline(self) -> dai.Pipeline:
         pipeline = dai.Pipeline()
 
+        rotate_180 = dai.CameraImageOrientation.ROTATE_180_DEG
+
         # Color camera (for YOLO input)
         cam = pipeline.create(dai.node.ColorCamera)
         cam.setPreviewSize(*INPUT_SIZE)
@@ -126,6 +131,8 @@ class YoloSpatialDetector:
         cam.setInterleaved(False)
         cam.setColorOrder(dai.ColorCameraProperties.ColorOrder.BGR)
         cam.setFps(30)
+        if self._flipped:
+            cam.setImageOrientation(rotate_180)
 
         # Stereo depth from mono cameras
         mono_left = pipeline.create(dai.node.MonoCamera)
@@ -134,14 +141,24 @@ class YoloSpatialDetector:
         mono_left.setCamera("left")
         mono_right.setResolution(dai.MonoCameraProperties.SensorResolution.THE_400_P)
         mono_right.setCamera("right")
+        if self._flipped:
+            mono_left.setImageOrientation(rotate_180)
+            mono_right.setImageOrientation(rotate_180)
 
         stereo = pipeline.create(dai.node.StereoDepth)
         stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
         stereo.setDepthAlign(dai.CameraBoardSocket.CAM_A)  # align depth to color
         stereo.setLeftRightCheck(True)
         stereo.setSubpixel(False)
-        mono_left.out.link(stereo.left)
-        mono_right.out.link(stereo.right)
+        # When flipped, the physically-left lens is rotated to spatially-right
+        # (and vice versa). Swap the stereo inputs so triangulation still has
+        # the actual left view feeding stereo.left.
+        if self._flipped:
+            mono_right.out.link(stereo.left)
+            mono_left.out.link(stereo.right)
+        else:
+            mono_left.out.link(stereo.left)
+            mono_right.out.link(stereo.right)
 
         # YOLO network running on-device with spatial output
         yolo = pipeline.create(dai.node.YoloSpatialDetectionNetwork)

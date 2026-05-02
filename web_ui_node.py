@@ -7,13 +7,18 @@ on the network, sees the annotated camera stream, and clicks an object to
 select it as the target. Clicks on empty space disengage.
 
 Endpoints:
-  GET  /              HTML page
-  GET  /stream.mjpg   MJPEG stream of /oakd/frame_jpeg
-  POST /select {x,y}  Normalized click coords (0..1). If a detection contains
-                      the point, its class is published on /oakd/select_target.
-                      Otherwise the current target is cleared (disengage).
-  POST /disengage     Clears the target.
-  GET  /state         JSON: current detections + latest error.
+  GET  /                       HTML page
+  GET  /stream.mjpg            MJPEG stream of /oakd/frame_jpeg
+  POST /select       {x,y}     Normalized click coords (0..1). Routes to the
+                               smallest detection containing the point; empty
+                               space disengages.
+  POST /select_class {class_name}
+                               Engage by class name without needing a precise
+                               click. Used by the in-page target buttons —
+                               more reliable than clicking a moving bbox over
+                               a laggy stream.
+  POST /disengage              Clears the target.
+  GET  /state                  JSON: current detections + path_clear + error.
 
 ROS side:
   Subscribes: /oakd/frame_jpeg, /oakd/detections, /oakd/path_clear, /oakd/error
@@ -149,6 +154,16 @@ def _build_app(node: WebUINode) -> Flask:
             f"UI click -> {det['class_name']} @ {det['distance']:.2f}m"
         )
         return jsonify(ok=True, class_name=det["class_name"])
+
+    @app.route("/select_class", methods=["POST"])
+    def select_class():
+        body = request.get_json(silent=True) or {}
+        name = (body.get("class_name") or "").strip()
+        if not name:
+            return jsonify(ok=False, error="missing class_name"), 400
+        node.publish_target(name)
+        node.get_logger().info(f"UI button -> {name}")
+        return jsonify(ok=True, class_name=name)
 
     @app.route("/disengage", methods=["POST"])
     def disengage():

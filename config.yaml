@@ -26,6 +26,10 @@ object_follower:
     # to /person_following_cmd_vel for proper teleop priority.
     cmd_vel_topic: "/cmd_vel"
 
+    # Set true if the OAK-D is mounted upside-down. Rotates all three cameras
+    # 180° and swaps the stereo correspondence so depth still works.
+    camera_flipped: true
+
     # Depth ROI used for generic obstacle checks. Coordinates are normalized
     # image ratios; the ROI is a forward corridor in the aligned depth frame.
     depth_corridor_width_ratio: 0.35
