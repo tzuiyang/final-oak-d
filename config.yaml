@@ -3,11 +3,11 @@ object_follower:
     # Path to the YOLO blob — relative paths are resolved from the node's script dir.
     model_blob_path: "models/yolov8n_coco_640x352.blob"
 
-    # Stop when the target is within this distance (meters). 1.5 m gives the
-    # walking policy a natural deceleration window — the robot still has
-    # half-a-meter or so of stopping distance after the follower commands
-    # zero, especially if YOLO briefly drops the target during close approach.
-    target_distance: 1.5
+    # Stop when the target is within this distance (meters). 0.5 m keeps
+    # the bot close on the heels of the person; the walking policy still
+    # carries some momentum after the zero command, so the actual final
+    # standoff settles a bit closer than this value.
+    target_distance: 0.5
 
     # Proportional gains
     k_forward: 0.8

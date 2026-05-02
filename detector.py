@@ -35,12 +35,12 @@ COORD_SIZE = 4
 ANCHORS: list[float] = []  # YOLOv8 is anchor-free
 ANCHOR_MASKS: dict[str, list[int]] = {}
 IOU_THRESHOLD = 0.5
-# 0.25 keeps detections landing at typical room distances (1–4 m). YOLOv8n
-# is small and bottles in particular score low; if we set this higher, the
-# follower sees so many empty frames that it can't sustain a walk command.
-# More false positives at this threshold, but bottles-only filtering keeps
-# them mostly contained.
-CONFIDENCE_THRESHOLD = 0.25
+# 0.7 — only act on confident detections. YOLOv8n's tail of 0.3–0.5
+# detections are mostly noisy/partial views that produced jittery follow
+# behavior in earlier runs; at 0.7 the UI shows a clean signal and the
+# follower's own dropout-decay handles the brief gaps when a confident
+# detection is unavailable for a frame or two.
+CONFIDENCE_THRESHOLD = 0.7
 
 
 @dataclass
