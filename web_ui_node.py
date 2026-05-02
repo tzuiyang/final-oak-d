@@ -51,14 +51,17 @@ class WebUINode(Node):
         self._latest_error: str = ""
         self._lock = threading.Lock()
 
+        # Streaming topics: depth=1 so we always show the freshest snapshot,
+        # never a queue of stale frames. Errors keep depth=10 so we don't
+        # drop a transient warning between polls.
         self.create_subscription(
-            CompressedImage, "/oakd/frame_jpeg", self._on_frame, 10
+            CompressedImage, "/oakd/frame_jpeg", self._on_frame, 1
         )
         self.create_subscription(
-            String, "/oakd/detections", self._on_detections, 10
+            String, "/oakd/detections", self._on_detections, 1
         )
         self.create_subscription(
-            String, "/oakd/path_clear", self._on_path_status, 10
+            String, "/oakd/path_clear", self._on_path_status, 1
         )
         self.create_subscription(
             String, "/oakd/error", self._on_error, 10

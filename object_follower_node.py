@@ -84,9 +84,12 @@ class ObjectFollowerNode(Node):
 
         cmd_topic = self.get_parameter("cmd_vel_topic").value
         self._cmd_pub = self.create_publisher(Twist, cmd_topic, 10)
-        self._det_pub = self.create_publisher(String, "/oakd/detections", 10)
-        self._path_pub = self.create_publisher(String, "/oakd/path_clear", 10)
-        self._frame_pub = self.create_publisher(CompressedImage, "/oakd/frame_jpeg", 10)
+        # Streaming topics use depth=1 so subscribers always see the latest
+        # snapshot. Old frames sitting in a 10-deep queue produce visible
+        # multi-second latency in the UI when WiFi hiccups.
+        self._det_pub = self.create_publisher(String, "/oakd/detections", 1)
+        self._path_pub = self.create_publisher(String, "/oakd/path_clear", 1)
+        self._frame_pub = self.create_publisher(CompressedImage, "/oakd/frame_jpeg", 1)
         self._target_sub = self.create_subscription(
             String, "/oakd/target", self._on_target, 10
         )

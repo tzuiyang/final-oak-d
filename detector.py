@@ -90,14 +90,18 @@ class YoloSpatialDetector:
     def __enter__(self) -> "YoloSpatialDetector":
         pipeline = self._build_pipeline()
         self._device = dai.Device(pipeline)
+        # maxSize=1 + blocking=False: only ever keep the most recent frame on
+        # each XLink output. The OAK-D drops old frames if the Pi falls
+        # behind, instead of buffering seconds of stale video that show up
+        # later as latency in the UI.
         self._queue = self._device.getOutputQueue(
-            name="detections", maxSize=4, blocking=False
+            name="detections", maxSize=1, blocking=False
         )
         self._rgb_queue = self._device.getOutputQueue(
-            name="rgb", maxSize=4, blocking=False
+            name="rgb", maxSize=1, blocking=False
         )
         self._depth_queue = self._device.getOutputQueue(
-            name="depth", maxSize=4, blocking=False
+            name="depth", maxSize=1, blocking=False
         )
         return self
 

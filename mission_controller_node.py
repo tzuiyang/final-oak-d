@@ -47,8 +47,10 @@ class MissionControllerNode(Node):
         self._miss_count = 0
         self._last_error = ""
 
-        self.create_subscription(String, "/oakd/detections", self._on_detections, 10)
-        self.create_subscription(String, "/oakd/path_clear", self._on_path_status, 10)
+        # Streaming topics: depth=1 so each evaluate() sees the latest
+        # snapshot, not a backlog. Selection commands keep depth=10.
+        self.create_subscription(String, "/oakd/detections", self._on_detections, 1)
+        self.create_subscription(String, "/oakd/path_clear", self._on_path_status, 1)
         self.create_subscription(String, "/oakd/select_target", self._on_select, 10)
 
         self._target_pub = self.create_publisher(String, "/oakd/target", 10)
