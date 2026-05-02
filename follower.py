@@ -65,11 +65,18 @@ class ObjectFollower:
             if self._frames_since_detection >= self._cfg.timeout_frames:
                 self._last_cmd = VelocityCommand.zero()
                 return self._last_cmd
-            # Brief dropouts: keep walking with the last command rather than
-            # zeroing every empty frame. Zero-on-every-miss made the cmd_vel
-            # flicker between the target velocity and zero, which prevents
-            # the walking policy from maintaining a gait (twitches in place).
-            return self._last_cmd
+            # Brief dropout: decay forward velocity geometrically so the
+            # robot doesn't barrel into the target when YOLO loses it
+            # close-up. 1–2 missed frames still produce smooth gait
+            # (factor stays high), but longer gaps fade to zero quickly.
+            # Yaw is held — we still want to keep turning toward the last
+            # known bearing while we wait to re-acquire.
+            decay = 0.6 ** self._frames_since_detection
+            return VelocityCommand(
+                x_vel=self._last_cmd.x_vel * decay,
+                y_vel=self._last_cmd.y_vel * decay,
+                ang_vel=self._last_cmd.ang_vel,
+            )
 
         self._frames_since_detection = 0
 
