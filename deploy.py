@@ -97,8 +97,13 @@ def _launch_cmd(setup_file: Path, launch_file: Path) -> list[str]:
 
 def start_upstream(pupper_ws: Path) -> subprocess.Popen:
     setup = _resolve_setup(pupper_ws)
-    cmd = _launch_cmd(setup, UPSTREAM_LAUNCH_FILE)
-    print(f"[deploy] Launching minimal upstream Pupper stack from {pupper_ws}")
+    # Use the upstream package's own launch. On this Pi the team has already
+    # locally trimmed it (no cmd_vel_mux, no person_follower, no hailo node),
+    # so it's the right entry point. pupper_minimal.launch.py is kept in this
+    # repo as a fallback for stock upstream installs that still bundle the
+    # conflicting nodes — see UPSTREAM_LAUNCH_FILE / --use-minimal flag.
+    cmd = _sourced(setup, "ros2 launch neural_controller launch.py")
+    print(f"[deploy] Launching upstream neural_controller from {pupper_ws}")
     # Separate process group so Ctrl+C on us doesn't kill it implicitly —
     # we handle its shutdown explicitly in stop_upstream().
     return subprocess.Popen(cmd, start_new_session=True)

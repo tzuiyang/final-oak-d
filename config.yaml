@@ -17,9 +17,14 @@ object_follower:
     # Stop if we lose the target for this many consecutive frames
     timeout_frames: 10
 
-    # cmd_vel_mux expects one of: /teleop_cmd_vel, /llm_cmd_vel, /person_following_cmd_vel
-    # Using the lowest-priority input so teleop can always preempt for safety.
-    cmd_vel_topic: "/person_following_cmd_vel"
+    # The Pi's modified upstream launch removed cmd_vel_mux and has
+    # teleop_twist_joy publish straight to /cmd_vel; the neural_controller
+    # also subscribes there. We follow the same convention. Our follower
+    # only publishes while a target is engaged, so it shares the topic with
+    # teleop without a mux — most-recent-publisher wins. If you redeploy
+    # against a stock upstream that *does* run cmd_vel_mux, change this back
+    # to /person_following_cmd_vel for proper teleop priority.
+    cmd_vel_topic: "/cmd_vel"
 
     # Depth ROI used for generic obstacle checks. Coordinates are normalized
     # image ratios; the ROI is a forward corridor in the aligned depth frame.
