@@ -13,8 +13,11 @@ object_follower:
     k_forward: 0.8
     k_yaw: 1.2
 
-    # Output clamps (keep modest so the default walking policy stays stable)
-    max_forward_vel: 0.5
+    # Output clamps. Forward speed kept low so the walking policy can
+    # actually stop within target_distance — at 0.5 m/s the gait inertia
+    # was carrying the robot ~25 cm past the stop command. 0.3 m/s buys
+    # back enough margin to stop reliably without feeling slow.
+    max_forward_vel: 0.3
     max_yaw_vel: 1.5
 
     # Stop if we lose the target for this many consecutive frames. With
