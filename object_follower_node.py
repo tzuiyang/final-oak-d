@@ -27,7 +27,7 @@ import rclpy
 from geometry_msgs.msg import Twist
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
-from sensor_msgs.msg import CompressedImage
+from sensor_msgs.msg import CompressedImage, Joy
 from std_msgs.msg import String
 
 
@@ -72,6 +72,10 @@ class ObjectFollowerNode(Node):
         # sparse), so keep this near 10 Hz. Set to 0 to publish on every
         # detection.
         self.declare_parameter("command_period_s", 0.1)
+        # Index into /joy.buttons for the AUTO/MANUAL toggle. Default 2 is
+        # Square on a PS5 DualSense. Avoid 0,1 (gait switch),
+        # 9 (activate), 12 (E-stop).
+        self.declare_parameter("mode_toggle_button", 2)
 
         cfg = FollowerConfig(
             target_distance=self.get_parameter("target_distance").value,
@@ -92,6 +96,10 @@ class ObjectFollowerNode(Node):
         self._had_target_in_view = False
         self._last_frame_pub = 0.0
         self._last_cmd_pub = 0.0
+        # AUTO = follower drives /cmd_vel from detections. MANUAL = forward
+        # /teleop_cmd_vel straight through. Toggle with the gamepad button.
+        self._manual_mode = False
+        self._prev_toggle_button = False
 
         cmd_topic = self.get_parameter("cmd_vel_topic").value
         self._cmd_pub = self.create_publisher(Twist, cmd_topic, 10)
@@ -107,6 +115,9 @@ class ObjectFollowerNode(Node):
         self._target_sub = self.create_subscription(
             String, "/oakd/target", self._on_target, 10
         )
+        # Joy for the mode toggle, /teleop_cmd_vel for the manual passthrough.
+        self.create_subscription(Joy, "/joy", self._on_joy, 10)
+        self.create_subscription(Twist, "/teleop_cmd_vel", self._on_teleop_cmd, 10)
 
         flipped = bool(self.get_parameter("camera_flipped").value)
         self._detector_ctx = YoloSpatialDetector(blob_path, flipped=flipped)
@@ -136,6 +147,25 @@ class ObjectFollowerNode(Node):
         self._engaged_target = new
         self._had_target_in_view = False
 
+    def _on_joy(self, msg: Joy):
+        btn_idx = int(self.get_parameter("mode_toggle_button").value)
+        if btn_idx >= len(msg.buttons):
+            return
+        pressed = msg.buttons[btn_idx] == 1
+        # Edge-trigger only — toggle on the press, ignore while held.
+        if pressed and not self._prev_toggle_button:
+            self._manual_mode = not self._manual_mode
+            mode = "MANUAL" if self._manual_mode else "AUTO"
+            self.get_logger().info(f"Mode -> {mode}")
+            # Stop momentum during the transition.
+            self._publish_velocity(VelocityCommand.zero(), force=True)
+        self._prev_toggle_button = pressed
+
+    def _on_teleop_cmd(self, msg: Twist):
+        # Only forward when in MANUAL mode. AUTO ignores teleop entirely.
+        if self._manual_mode:
+            self._cmd_pub.publish(msg)
+
     def _tick(self):
         item = next(self._detection_stream, None)
         if item is None:
@@ -146,6 +176,11 @@ class ObjectFollowerNode(Node):
         path_status = self._compute_path_status(depth_frame)
         self._publish_path_status(path_status)
         self._maybe_publish_frame(frame, detections, path_status)
+
+        # In MANUAL the operator drives via /teleop_cmd_vel — _on_teleop_cmd
+        # forwards those messages directly. Skip the autonomous follower.
+        if self._manual_mode:
+            return
 
         if not self._engaged_target:
             return
