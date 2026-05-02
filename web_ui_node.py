@@ -21,16 +21,25 @@ Endpoints:
                                Engage by class name without needing a precise
                                click. Used by the in-page target buttons.
   POST /disengage              Clears the target.
-  GET  /state                  JSON: current detections + path_clear + error.
+  POST /rosbag/start           Start a `ros2 bag record` subprocess writing to
+                               <repo>/rosbag/<timestamp>. 409 if already running.
+  POST /rosbag/stop            SIGINT the recorder and wait for mcap metadata
+                               to flush. 409 if not running.
+  GET  /state                  JSON: detections + path_clear + error + mode +
+                               recording state.
 
 ROS side:
   Subscribes: /oakd/frame_jpeg, /oakd/detections, /oakd/path_clear, /oakd/error
   Publishes:  /oakd/select_target  (forwarded to mission_controller_node)
 """
 
+import datetime
 import json
+import signal
+import subprocess
 import threading
 import time
+from pathlib import Path
 from typing import Optional
 
 import rclpy
@@ -39,6 +48,29 @@ from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import CompressedImage
 from std_msgs.msg import String
+
+
+# Topics captured by the in-UI rosbag recorder. Kept in sync with
+# record_follow.sh — change both if you add a topic.
+_RECORD_TOPICS = [
+    "/oakd/detections",
+    "/oakd/target",
+    "/oakd/select_target",
+    "/oakd/path_clear",
+    "/oakd/error",
+    "/oakd/mode",
+    "/oakd/frame_jpeg",
+    "/person_following_cmd_vel",
+    "/cmd_vel",
+    "/teleop_cmd_vel",
+    "/joy",
+    "/imu_sensor_broadcaster/imu",
+]
+_RECORD_DIR = Path(__file__).resolve().parent / "rosbag"
+# Without this overrides file the recorder subscribes RELIABLE and silently
+# drops every message from our BEST_EFFORT publishers (detections, depth,
+# frames). See recorder_qos.yaml.
+_RECORD_QOS_OVERRIDES = Path(__file__).resolve().parent / "recorder_qos.yaml"
 
 
 # Best-effort QoS for streaming topics — drop stale messages instead of
@@ -65,6 +97,14 @@ class WebUINode(Node):
         self._latest_error: str = ""
         self._latest_mode: str = "AUTO"
         self._lock = threading.Lock()
+
+        # Rosbag recorder state. The subprocess is owned by this node so we
+        # can stop it cleanly on shutdown — otherwise mcap metadata would not
+        # be flushed.
+        self._rec_lock = threading.Lock()
+        self._rec_proc: Optional[subprocess.Popen] = None
+        self._rec_name: Optional[str] = None
+        self._rec_started_at: Optional[float] = None
 
         # Streaming topics use BEST_EFFORT QoS so a slow subscriber drops
         # stale messages instead of buffering them. Errors keep RELIABLE
@@ -152,6 +192,114 @@ class WebUINode(Node):
         msg.data = class_name
         self._select_pub.publish(msg)
 
+    def get_recording_state(self) -> dict:
+        with self._rec_lock:
+            running = self._rec_proc is not None and self._rec_proc.poll() is None
+            # Reap a finished subprocess so the next start sees a clean slate.
+            if self._rec_proc is not None and not running:
+                self._rec_proc = None
+                self._rec_name = None
+                self._rec_started_at = None
+            return {
+                "recording": running,
+                "name": self._rec_name if running else None,
+                "started_at": self._rec_started_at if running else None,
+            }
+
+    def start_recording(self) -> tuple[bool, str, dict]:
+        with self._rec_lock:
+            if self._rec_proc is not None and self._rec_proc.poll() is None:
+                return False, "already recording", self._rec_state_locked()
+            _RECORD_DIR.mkdir(parents=True, exist_ok=True)
+            name = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            out = _RECORD_DIR / name
+            if out.exists():
+                # Same-second re-click — append a counter rather than fail.
+                for i in range(1, 100):
+                    candidate = _RECORD_DIR / f"{name}_{i}"
+                    if not candidate.exists():
+                        out = candidate
+                        name = candidate.name
+                        break
+            cmd = [
+                "ros2", "bag", "record",
+                "-o", str(out),
+                "-s", "mcap",
+                "--include-unpublished-topics",
+            ]
+            if _RECORD_QOS_OVERRIDES.exists():
+                cmd += ["--qos-profile-overrides-path", str(_RECORD_QOS_OVERRIDES)]
+            cmd += list(_RECORD_TOPICS)
+            try:
+                self._rec_proc = subprocess.Popen(
+                    cmd,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    # New session so SIGINT stays scoped to the recorder and
+                    # doesn't kill the parent on Ctrl+C in the wrong terminal.
+                    start_new_session=True,
+                )
+            except FileNotFoundError as exc:
+                return False, f"ros2 not on PATH: {exc}", self._rec_state_locked()
+            self._rec_name = name
+            self._rec_started_at = time.time()
+            self.get_logger().info(f"rosbag recording started -> {out}")
+            return True, "", self._rec_state_locked()
+
+    def stop_recording(self) -> tuple[bool, str, dict]:
+        with self._rec_lock:
+            if self._rec_proc is None or self._rec_proc.poll() is not None:
+                # Already stopped — clean up state and report no-op.
+                self._rec_proc = None
+                self._rec_name = None
+                self._rec_started_at = None
+                return False, "not recording", self._rec_state_locked()
+            proc = self._rec_proc
+            name = self._rec_name
+        # SIGINT so rosbag2 flushes mcap metadata.yaml. Wait outside the lock
+        # so /state polls aren't blocked.
+        try:
+            proc.send_signal(signal.SIGINT)
+        except ProcessLookupError:
+            pass
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            self.get_logger().warn("rosbag recorder didn't exit on SIGINT — sending SIGTERM")
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.get_logger().error("rosbag recorder still alive — SIGKILL")
+                proc.kill()
+                proc.wait(timeout=5)
+        with self._rec_lock:
+            self._rec_proc = None
+            self._rec_name = None
+            self._rec_started_at = None
+        self.get_logger().info(f"rosbag recording stopped: {name}")
+        return True, "", {"recording": False, "name": None, "started_at": None}
+
+    def _rec_state_locked(self) -> dict:
+        running = self._rec_proc is not None and self._rec_proc.poll() is None
+        return {
+            "recording": running,
+            "name": self._rec_name if running else None,
+            "started_at": self._rec_started_at if running else None,
+        }
+
+    def destroy_node(self):
+        # Make sure we don't leave a recorder orphaned when the UI shuts down.
+        try:
+            with self._rec_lock:
+                proc = self._rec_proc
+            if proc is not None and proc.poll() is None:
+                self.stop_recording()
+        except Exception:  # noqa: BLE001 — shutdown best-effort
+            pass
+        super().destroy_node()
+
 
 def _build_app(node: WebUINode) -> Flask:
     app = Flask(__name__)
@@ -217,7 +365,22 @@ def _build_app(node: WebUINode) -> Flask:
             path_clear=node.get_path_status(),
             error=node.get_error(),
             mode=node.get_mode(),
+            recording=node.get_recording_state(),
         )
+
+    @app.route("/rosbag/start", methods=["POST"])
+    def rosbag_start():
+        ok, err, state = node.start_recording()
+        if not ok:
+            return jsonify(ok=False, error=err, state=state), 409
+        return jsonify(ok=True, state=state)
+
+    @app.route("/rosbag/stop", methods=["POST"])
+    def rosbag_stop():
+        ok, err, state = node.stop_recording()
+        if not ok:
+            return jsonify(ok=False, error=err, state=state), 409
+        return jsonify(ok=True, state=state)
 
     return app
 

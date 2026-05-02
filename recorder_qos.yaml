@@ -1,0 +1,20 @@
+# QoS overrides for `ros2 bag record`. Without these, `--include-unpublished-topics`
+# subscribes with default RELIABLE QoS, which silently fails to receive any
+# messages from our BEST_EFFORT publishers (object_follower's streaming
+# topics). Match the publisher profile in object_follower_node.py
+# (_STREAMING_QOS).
+/oakd/detections:
+  history: keep_last
+  depth: 1
+  reliability: best_effort
+  durability: volatile
+/oakd/path_clear:
+  history: keep_last
+  depth: 1
+  reliability: best_effort
+  durability: volatile
+/oakd/frame_jpeg:
+  history: keep_last
+  depth: 1
+  reliability: best_effort
+  durability: volatile

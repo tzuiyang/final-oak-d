@@ -24,3 +24,7 @@ env/
 
 # Reference code (upstream — not part of this repo)
 reference/
+
+# Recorded debug bags
+bags/
+rosbag/

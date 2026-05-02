@@ -61,6 +61,18 @@
     border-color: #5c5;
     color: #fff;
   }
+  button.rec {
+    background: #3a1a1a;
+    border-color: #844;
+    color: #fbb;
+  }
+  button.rec:hover { background: #4a2a2a; }
+  button.rec.recording {
+    background: #6a2222;
+    border-color: #d44;
+    color: #fff;
+  }
+  .pill.rec { color: #f88; border-color: #844; }
   #targets {
     display: flex;
     flex-wrap: wrap;
@@ -87,6 +99,8 @@
     <span id="status" class="pill">standing still</span>
     <span id="path" class="pill">depth: waiting</span>
     <button id="stopBtn">stop</button>
+    <button id="recBtn" class="rec">● record</button>
+    <span id="rec" class="pill" style="display:none"></span>
     <span id="error" class="pill err" style="display:none"></span>
   </div>
   <div id="targets"></div>
@@ -100,7 +114,10 @@
   const stopBtn = document.getElementById('stopBtn');
   const targetsEl = document.getElementById('targets');
   const modeEl = document.getElementById('mode');
+  const recBtn = document.getElementById('recBtn');
+  const recPill = document.getElementById('rec');
   let engagedClass = '';
+  let recState = {recording: false, name: null, started_at: null};
 
   // Self-pacing frame loop: request the next frame only after the previous
   // one finishes loading. If the network is slow, requests slow down too —
@@ -169,6 +186,42 @@
     setStatus('stopped');
   });
 
+  function renderRec() {
+    if (recState.recording) {
+      recBtn.textContent = '■ stop recording';
+      recBtn.classList.add('recording');
+      recPill.style.display = '';
+      const elapsed = recState.started_at
+        ? Math.floor(Date.now() / 1000 - recState.started_at)
+        : 0;
+      const mm = String(Math.floor(elapsed / 60)).padStart(2, '0');
+      const ss = String(elapsed % 60).padStart(2, '0');
+      recPill.textContent = `REC ${recState.name || ''} ${mm}:${ss}`;
+      recPill.classList.add('rec');
+    } else {
+      recBtn.textContent = '● record';
+      recBtn.classList.remove('recording');
+      recPill.style.display = 'none';
+    }
+  }
+
+  recBtn.addEventListener('click', async () => {
+    recBtn.disabled = true;
+    try {
+      const url = recState.recording ? '/rosbag/stop' : '/rosbag/start';
+      const r = await fetch(url, {method: 'POST'});
+      const body = await r.json().catch(() => ({}));
+      if (body.state) recState = body.state;
+      renderRec();
+    } finally {
+      recBtn.disabled = false;
+    }
+  });
+
+  // Tick the elapsed counter once a second so the pill updates between
+  // /state polls.
+  setInterval(() => { if (recState.recording) renderRec(); }, 1000);
+
   async function pollState() {
     try {
       const r = await fetch('/state');
@@ -193,6 +246,7 @@
       modeEl.textContent = `mode: ${mode}`;
       modeEl.classList.remove('ok', 'err');
       modeEl.classList.add(mode === 'MANUAL' ? 'err' : 'ok');
+      if (s.recording) { recState = s.recording; renderRec(); }
       renderTargets(s.detections);
     } catch (e) { /* transient; retry next tick */ }
   }
