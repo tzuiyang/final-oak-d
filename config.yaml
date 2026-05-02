@@ -53,7 +53,14 @@ mission_controller:
     # How often the path-clear check is re-evaluated.
     evaluate_period_s: 0.2
 
-    # Fail closed if the depth corridor status is unavailable or invalid.
+    # Whether to run the depth-corridor obstacle check at all. Off by default:
+    # the OAK-D's near-field depth tends to read the floor in front of the bot
+    # (≈0.3–0.5 m) and flag it as an obstacle. Re-enable once the ROI is
+    # tuned (depth_corridor_ymax in object_follower) to clear the floor.
+    enable_depth_path_check: false
+
+    # Only used when enable_depth_path_check is true. Fail closed if depth
+    # is unavailable or invalid (no frames, all NaNs, etc.).
     require_depth_path_check: true
 
 web_ui:

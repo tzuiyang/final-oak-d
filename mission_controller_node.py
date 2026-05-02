@@ -33,6 +33,7 @@ class MissionControllerNode(Node):
         self.declare_parameter("obstacle_clearance_m", 0.2)
         self.declare_parameter("print_period_s", 2.0)
         self.declare_parameter("evaluate_period_s", 0.2)
+        self.declare_parameter("enable_depth_path_check", False)
         self.declare_parameter("require_depth_path_check", True)
         # How many consecutive evaluations without the target before we
         # surface an error and disengage. At the default 0.2 s eval period,
@@ -154,6 +155,8 @@ class MissionControllerNode(Node):
         self._publish_error("")  # clear any stale error now that we're engaged
 
     def _depth_path_error(self, target: dict, clearance: float):
+        if not bool(self.get_parameter("enable_depth_path_check").value):
+            return None
         status = self._latest_path_status
         require_depth = bool(self.get_parameter("require_depth_path_check").value)
         if not status:
