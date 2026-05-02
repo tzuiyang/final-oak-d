@@ -25,6 +25,8 @@ import cv2
 import numpy as np
 import rclpy
 from geometry_msgs.msg import Twist
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
 from sensor_msgs.msg import CompressedImage, Joy
@@ -118,9 +120,21 @@ class ObjectFollowerNode(Node):
         self._target_sub = self.create_subscription(
             String, "/oakd/target", self._on_target, 10
         )
-        # Joy for the mode toggle, /teleop_cmd_vel for the manual passthrough.
-        self.create_subscription(Joy, "/joy", self._on_joy, 10)
-        self.create_subscription(Twist, "/teleop_cmd_vel", self._on_teleop_cmd, 10)
+        # The detection-processing _tick is the slow callback (YOLO consumption
+        # + JPEG encoding can take 30-80 ms). Put it in its own mutually-
+        # exclusive group, and put the teleop/joy subscriptions in a
+        # reentrant group so they can run on a separate thread while _tick
+        # is busy. Without this, MANUAL-mode stick movements visibly lag
+        # because /teleop_cmd_vel callbacks queue behind _tick.
+        self._tick_cb_group = MutuallyExclusiveCallbackGroup()
+        self._fast_cb_group = ReentrantCallbackGroup()
+        self.create_subscription(
+            Joy, "/joy", self._on_joy, 10, callback_group=self._fast_cb_group
+        )
+        self.create_subscription(
+            Twist, "/teleop_cmd_vel", self._on_teleop_cmd, 10,
+            callback_group=self._fast_cb_group,
+        )
 
         flipped = bool(self.get_parameter("camera_flipped").value)
         self._detector_ctx = YoloSpatialDetector(blob_path, flipped=flipped)
@@ -131,7 +145,9 @@ class ObjectFollowerNode(Node):
             f"flipped={flipped})"
         )
 
-        self._timer = self.create_timer(0.01, self._tick)
+        self._timer = self.create_timer(
+            0.01, self._tick, callback_group=self._tick_cb_group
+        )
         # Publish the initial mode so the UI shows AUTO from the start.
         self._publish_mode()
 
@@ -398,11 +414,16 @@ def _clamp_float(value, low: float, high: float) -> float:
 def main():
     rclpy.init()
     node = ObjectFollowerNode()
+    # MultiThreadedExecutor so the slow _tick (YOLO + JPEG) doesn't block
+    # the gamepad/teleop callbacks. 4 threads is plenty for this node.
+    executor = MultiThreadedExecutor(num_threads=4)
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     finally:
+        executor.shutdown()
         node.destroy_node()
         rclpy.shutdown()
 
