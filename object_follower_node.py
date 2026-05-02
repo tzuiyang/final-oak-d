@@ -125,11 +125,14 @@ class ObjectFollowerNode(Node):
             return
         if new:
             self.get_logger().info(f"Engaging follower on target: {new}")
+            # Reset the rate-limit clock so the first real velocity command
+            # goes out immediately on the next tick — otherwise the robot
+            # sits still for up to command_period_s after engagement.
+            self._last_cmd_pub = 0.0
         else:
             self.get_logger().info("Disengaged — standing still")
-        # Force the zero out regardless of the rate limit — disengage must
-        # be immediate for safety.
-        self._publish_velocity(VelocityCommand.zero(), force=True)
+            # Force-publish zero immediately, bypassing the rate limit.
+            self._publish_velocity(VelocityCommand.zero(), force=True)
         self._engaged_target = new
         self._had_target_in_view = False
 
