@@ -36,10 +36,11 @@ object_follower:
     # 180° and swaps the stereo correspondence so depth still works.
     camera_flipped: true
 
-    # Throttle cmd_vel publishing. The walking policy needs steady input to
-    # hold a gait — too sparse and the robot just twitches in place. 10 Hz
-    # is plenty smooth without flooding the bus.
-    command_period_s: 0.1
+    # Throttle cmd_vel publishing. 20 Hz so the policy gets a fresh goal
+    # velocity every gait phase. The follower's velocity-decay-on-dropout
+    # smoothing keeps the input stable enough to maintain a gait — earlier
+    # twitch issue was zero-flicker on dropout, not raw rate.
+    command_period_s: 0.05
 
     # /joy.buttons index for AUTO/MANUAL toggle. On this Pi's hid-playstation
     # mapping, button 3 = Square. Avoid 0,1 (gait switch), 9 (activate),

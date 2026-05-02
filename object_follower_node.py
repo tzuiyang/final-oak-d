@@ -73,7 +73,7 @@ class ObjectFollowerNode(Node):
         # to maintain a gait (it twitches in place if the input is too
         # sparse), so keep this near 10 Hz. Set to 0 to publish on every
         # detection.
-        self.declare_parameter("command_period_s", 0.1)
+        self.declare_parameter("command_period_s", 0.05)
         # Index into /joy.buttons for the AUTO/MANUAL toggle. Default 2 is
         # Square on a PS5 DualSense. Avoid 0,1 (gait switch),
         # 9 (activate), 12 (E-stop).
