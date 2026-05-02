@@ -40,9 +40,10 @@ object_follower:
     # is plenty smooth without flooding the bus.
     command_period_s: 0.1
 
-    # /joy.buttons index for AUTO/MANUAL toggle. Defaults: 2 = Square on PS5.
-    # Avoid 0,1 (gait switch), 9 (activate), 12 (E-stop / R3).
-    mode_toggle_button: 2
+    # /joy.buttons index for AUTO/MANUAL toggle. On this Pi's hid-playstation
+    # mapping, button 3 = Square. Avoid 0,1 (gait switch), 9 (activate),
+    # 12 (E-stop / R3). Verify with `ros2 topic echo /joy --once` if remapping.
+    mode_toggle_button: 3
 
     # Depth ROI used for generic obstacle checks. Coordinates are normalized
     # image ratios; the ROI is a forward corridor in the aligned depth frame.
