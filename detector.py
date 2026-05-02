@@ -154,15 +154,17 @@ class YoloSpatialDetector:
             mono_right.setImageOrientation(rotate_180)
 
         stereo = pipeline.create(dai.node.StereoDepth)
-        # ROBOTICS preset (depthai 2.30+) is tuned for mobile-robot follow
-        # tasks: confidence threshold and post-processing biased toward
-        # rejecting wrong matches over filling holes. With subpixel
-        # disparity on top (~5x finer than the integer-pixel default), this
-        # was the difference between z bouncing 0.6m -> 8.6m on the same
-        # person and a stable read at typical follow distances.
-        stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.ROBOTICS)
+        # HIGH_DENSITY keeps depth coverage high so the YOLO bbox sample
+        # almost always finds valid pixels. We tried ROBOTICS with subpixel
+        # + a tighter bbox sample, and the high cost-match confidence in
+        # ROBOTICS rejected so many pixels that the spatial calculator
+        # returned (0,0,0) for ~97% of detections. Density preset + the
+        # post-processing below is the working middle ground.
+        stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
         stereo.setDepthAlign(dai.CameraBoardSocket.CAM_A)  # align depth to color
         stereo.setLeftRightCheck(True)
+        # Subpixel disparity is ~5x finer than the integer-pixel default,
+        # which was the dominant source of frame-to-frame z noise.
         stereo.setSubpixel(True)
         # 5x5 median knocks out single-pixel disparity outliers before the
         # YOLO node samples its bbox region.
@@ -186,18 +188,7 @@ class YoloSpatialDetector:
         yolo.setAnchors(ANCHORS)
         yolo.setAnchorMasks(ANCHOR_MASKS)
         yolo.setIouThreshold(IOU_THRESHOLD)
-        # Sample only the inner 30% of each YOLO bbox for spatial coords. A
-        # person bbox is loose around the silhouette and usually contains a
-        # lot of background pixels at the edges; the 0.5 default was letting
-        # those background pixels dominate the depth median. 0.3 keeps the
-        # sample tightly on the torso.
-        yolo.setBoundingBoxScaleFactor(0.3)
-        # MEDIAN over the sampled region is robust to outliers (a noisy
-        # near-pixel or a hole reading 0); AVERAGE (the default) gets
-        # dragged around by both.
-        yolo.setSpatialCalculationAlgorithm(
-            dai.SpatialLocationCalculatorAlgorithm.MEDIAN
-        )
+        yolo.setBoundingBoxScaleFactor(0.5)
         yolo.setDepthLowerThreshold(100)    # mm; ignore returns closer than 10 cm
         yolo.setDepthUpperThreshold(10_000) # mm; ignore returns farther than 10 m
         cam.preview.link(yolo.input)
