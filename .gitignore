@@ -25,10 +25,6 @@ env/
 # Reference code (upstream — not part of this repo)
 reference/
 
-# Recorded debug bags
-bags/
-rosbag/
-
 # Raw videos kept locally for editing source — too large for GitHub
 # (100 MB per-file hard limit). The 1080p MP4 versions next to them
 # are committed.
